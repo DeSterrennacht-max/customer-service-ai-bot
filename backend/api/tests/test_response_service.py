@@ -1,0 +1,327 @@
+from __future__ import annotations
+
+from types import SimpleNamespace
+from uuid import uuid4
+
+import pytest
+
+from backend.api.app.db.models.entities import MessageSource
+from backend.api.app.services.knowledge_service import RetrievedKnowledge, render_markdown_as_reply, select_knowledge_reply
+from backend.api.app.services.response_service import ResponseService
+
+
+def test_render_markdown_as_reply_keeps_links_and_lists() -> None:
+    markdown = "## 新版工作台地址\n- https://www.007chats.com/dock\n[下载链接](https://tmp.007chats.com/app.exe)"
+
+    reply = render_markdown_as_reply(markdown)
+
+    assert "##" not in reply
+    assert "- https://www.007chats.com/dock" in reply
+    assert "下载链接：https://tmp.007chats.com/app.exe" in reply
+
+
+def test_select_knowledge_reply_prefers_relevant_section_over_full_page() -> None:
+    markdown = """
+## 客户端下载方式
+
+### Windows 电脑端
+下载链接：
+https://tmp.007chats.com/windows.exe
+
+### Mac 电脑端
+下载链接：
+https://tmp.007chats.com/mac.dmg
+
+### 手机端 - 苹果
+下载方式：
+- 在 App Store 国际区搜索应用名称：007 Agent
+""".strip()
+
+    reply = select_knowledge_reply("客户端下载方式", markdown, "Windows 客户端怎么下载？")
+
+    assert "Windows 电脑端" in reply
+    assert "https://tmp.007chats.com/windows.exe" in reply
+    assert "Mac 电脑端" not in reply
+    assert "007 Agent" not in reply
+
+
+def test_select_knowledge_reply_includes_child_sections_for_address_directory_page() -> None:
+    markdown = """
+## 新版工作台地址
+
+目前可使用以下工作台地址登录：
+
+### CloudFlare
+- https://www.007chats.com/dock
+- https://www.007proxy.uk/dock
+
+### 阿里 CDN
+- https://al.007chatlive.com/dock
+
+## 使用说明
+- 如果当前线路较慢，可切换其他线路。
+""".strip()
+
+    reply = select_knowledge_reply("新版工作台地址与线路说明", markdown, "新版工作台地址在哪里？")
+
+    assert "新版工作台地址与线路说明" not in reply
+    assert "新版工作台地址\n" not in reply
+    assert "目前可使用以下工作台地址登录：" in reply
+    assert "https://www.007chats.com/dock" in reply
+    assert "https://www.007proxy.uk/dock" in reply
+    assert "https://al.007chatlive.com/dock" in reply
+    assert "使用说明" not in reply
+
+
+def test_build_answer_for_faq_uses_faq_lookup() -> None:
+    service = ResponseService()
+    conversation = SimpleNamespace(bot_profile_id=uuid4())
+    expected = RetrievedKnowledge(
+        text="标准版是 499/坐席/年。",
+        evidence=["faq:test-faq"],
+        source_type="faq",
+        structured=False,
+    )
+
+    service.knowledge.retrieve_faq = lambda db, bot_profile_id, text: expected
+    service.knowledge.retrieve_knowledge_page = lambda db, bot_profile_id, text: pytest.fail("FAQ 路径不应该查知识页")
+
+    text, evidence, source_type, structured = service._build_answer(None, conversation, "价格是多少", "faq")
+
+    assert text == "标准版是 499/坐席/年。"
+    assert evidence == ["faq:test-faq"]
+    assert source_type == "faq"
+    assert structured is False
+
+
+def test_build_answer_for_knowledge_uses_page_lookup_without_prefix() -> None:
+    service = ResponseService()
+    conversation = SimpleNamespace(bot_profile_id=uuid4())
+    expected = RetrievedKnowledge(
+        text="新版工作台地址\nhttps://www.007chats.com/dock",
+        evidence=["knowledge_page:test-page"],
+        source_type="knowledge_page",
+        structured=True,
+    )
+
+    service.knowledge.retrieve_faq = lambda db, bot_profile_id, text: pytest.fail("knowledge 路径不应该先查 FAQ")
+    service.knowledge.retrieve_knowledge_page = lambda db, bot_profile_id, text: expected
+
+    text, evidence, source_type, structured = service._build_answer(None, conversation, "新版工作台地址在哪里？", "knowledge")
+
+    assert text == "新版工作台地址\nhttps://www.007chats.com/dock"
+    assert "根据现有项目资料" not in text
+    assert evidence == ["knowledge_page:test-page"]
+    assert source_type == "knowledge_page"
+    assert structured is True
+
+
+def test_handle_customer_message_prefers_faq_before_knowledge() -> None:
+    service = ResponseService()
+    conversation = SimpleNamespace(
+        bot_profile_id=uuid4(),
+        status="open",
+        tenant_id=uuid4(),
+        telegram_chat_id="123456",
+        id=uuid4(),
+    )
+    faq_result = RetrievedKnowledge(
+        text="标准版是 499/坐席/年，优惠价 400 USDT；高级版是 799/坐席/年，优惠价 700 USDT。",
+        evidence=["faq:pricing"],
+        source_type="faq",
+        structured=False,
+    )
+
+    service.conversations.record_message = lambda *args, **kwargs: None
+    service.conversations.get_bot_profile = lambda db, bot_profile_id: SimpleNamespace(
+        high_risk_keywords_json=["人工"],
+        sensitive_keywords_json=["诈骗"],
+        telegram_bot_token="bot-token",
+    )
+    service.rules.route = lambda text, bot_profile=None: None
+    service.knowledge.retrieve_faq = lambda db, bot_profile_id, text: faq_result
+    service.knowledge.retrieve_knowledge_page = lambda db, bot_profile_id, text: pytest.fail("FAQ 命中后不应再查知识页")
+
+    result = service.handle_customer_message(None, conversation, "标准版多少钱", {}, None)
+
+    assert result.action == "template_reply"
+    assert result.intent == "faq"
+    assert result.text == faq_result.text
+    assert result.evidence == ["faq:pricing"]
+
+
+def test_handle_customer_message_uses_bot_specific_welcome_message() -> None:
+    service = ResponseService()
+    conversation = SimpleNamespace(
+        bot_profile_id=uuid4(),
+        status="open",
+        tenant_id=uuid4(),
+        telegram_chat_id="123456",
+        id=uuid4(),
+    )
+
+    service.conversations.record_message = lambda *args, **kwargs: None
+    service.conversations.get_bot_profile = lambda db, bot_profile_id: SimpleNamespace(
+        welcome_message="你好，这里是 A 机器人。你可以直接发问题给我。",
+        high_risk_keywords_json=["人工"],
+        sensitive_keywords_json=["诈骗"],
+        telegram_bot_token="bot-token",
+    )
+
+    result = service.handle_customer_message(None, conversation, "/start", {}, None)
+
+    assert result.action == "template_reply"
+    assert result.intent == "welcome"
+    assert result.text == "你好，这里是 A 机器人。你可以直接发问题给我。"
+    assert result.evidence == ["system:welcome"]
+
+
+def test_handle_customer_message_uses_knowledge_when_faq_misses() -> None:
+    service = ResponseService()
+    conversation = SimpleNamespace(
+        bot_profile_id=uuid4(),
+        status="open",
+        tenant_id=uuid4(),
+        telegram_chat_id="123456",
+        id=uuid4(),
+    )
+    knowledge_result = RetrievedKnowledge(
+        text="Windows 电脑端\n下载链接：https://tmp.007chats.com/windows.exe",
+        evidence=["knowledge_page:downloads"],
+        source_type="knowledge_page",
+        structured=True,
+    )
+
+    service.conversations.record_message = lambda *args, **kwargs: None
+    service.conversations.get_bot_profile = lambda db, bot_profile_id: SimpleNamespace(
+        high_risk_keywords_json=["人工"],
+        sensitive_keywords_json=["诈骗"],
+        telegram_bot_token="bot-token",
+    )
+    service.rules.route = lambda text, bot_profile=None: None
+    service.knowledge.retrieve_faq = lambda db, bot_profile_id, text: None
+    service.knowledge.retrieve_knowledge_page = lambda db, bot_profile_id, text: knowledge_result
+
+    result = service.handle_customer_message(None, conversation, "Windows 客户端怎么下载？", {}, None)
+
+    assert result.action == "knowledge_reply"
+    assert result.intent == "knowledge"
+    assert result.text == knowledge_result.text
+    assert result.evidence == ["knowledge_page:downloads"]
+
+
+def test_handle_customer_message_clarifies_when_faq_and_knowledge_miss() -> None:
+    service = ResponseService()
+    conversation = SimpleNamespace(
+        bot_profile_id=uuid4(),
+        status="open",
+        tenant_id=uuid4(),
+        telegram_chat_id="123456",
+        id=uuid4(),
+    )
+
+    service.conversations.record_message = lambda *args, **kwargs: None
+    service.conversations.get_bot_profile = lambda db, bot_profile_id: SimpleNamespace(
+        high_risk_keywords_json=["人工"],
+        sensitive_keywords_json=["诈骗"],
+        telegram_bot_token="bot-token",
+    )
+    service.rules.route = lambda text, bot_profile=None: None
+    service.knowledge.retrieve_faq = lambda db, bot_profile_id, text: None
+    service.knowledge.retrieve_knowledge_page = lambda db, bot_profile_id, text: None
+
+    result = service.handle_customer_message(None, conversation, "我想问一下这个情况", {}, None)
+
+    assert result.action == "clarify"
+    assert result.intent == "unclear"
+    assert result.text == "我先确认一下，你是想咨询具体功能/套餐，还是遇到了某个使用问题？"
+
+
+def test_followup_message_reuses_recent_context_before_generic_knowledge_lookup() -> None:
+    service = ResponseService()
+    conversation = SimpleNamespace(
+        bot_profile_id=uuid4(),
+        status="open",
+        tenant_id=uuid4(),
+        telegram_chat_id="123456",
+        id=uuid4(),
+    )
+    knowledge_result = RetrievedKnowledge(
+        text="007chat 在线客服系统费用\n- 标准版：499 / 坐席 / 年",
+        evidence=["knowledge_page:pricing"],
+        source_type="knowledge_page",
+        structured=True,
+    )
+    current_customer_id = uuid4()
+    last_bot_id = uuid4()
+    previous_customer_id = uuid4()
+
+    service.conversations.record_message = lambda *args, **kwargs: None
+    service.conversations.get_bot_profile = lambda db, bot_profile_id: SimpleNamespace(
+        high_risk_keywords_json=["人工"],
+        sensitive_keywords_json=["诈骗"],
+        telegram_bot_token="bot-token",
+    )
+    service.rules.route = lambda text, bot_profile=None: None
+    service._get_recent_messages = lambda db, conversation, limit=6: [
+        SimpleNamespace(id=current_customer_id, source=MessageSource.CUSTOMER, content_text="10个坐席"),
+        SimpleNamespace(
+            id=last_bot_id,
+            source=MessageSource.BOT,
+            content_text="007chat 按坐席按年收费。标准版和高级版价格不同，如果您告诉我需要几个坐席，我可以继续帮您确认更合适的方案。",
+            intent="faq",
+        ),
+        SimpleNamespace(id=previous_customer_id, source=MessageSource.CUSTOMER, content_text="价格是多少"),
+    ]
+
+    faq_queries: list[str] = []
+    knowledge_queries: list[str] = []
+
+    def fake_retrieve_faq(db, bot_profile_id, text):
+        faq_queries.append(text)
+        return None
+
+    def fake_retrieve_knowledge(db, bot_profile_id, text):
+        knowledge_queries.append(text)
+        if text == "价格是多少 10个坐席":
+            return knowledge_result
+        if text == "10个坐席":
+            pytest.fail("短跟进消息不应该直接按裸文本去查知识页")
+        return None
+
+    service.knowledge.retrieve_faq = fake_retrieve_faq
+    service.knowledge.retrieve_knowledge_page = fake_retrieve_knowledge
+
+    result = service.handle_customer_message(object(), conversation, "10个坐席", {}, None)
+
+    assert result.action == "knowledge_reply"
+    assert result.text == knowledge_result.text
+    assert "价格是多少 10个坐席" in faq_queries
+    assert knowledge_queries == ["价格是多少 10个坐席"]
+
+
+def test_handoff_uses_conversation_bot_profile_group_instead_of_default_bot() -> None:
+    service = ResponseService()
+    conversation = SimpleNamespace(bot_profile_id=uuid4(), id=uuid4())
+    ticket = SimpleNamespace(id=uuid4())
+    bot_profile = SimpleNamespace(
+        telegram_bot_token="bot-token-from-conversation",
+        support_group_chat_id="-100200300400",
+    )
+    captured: dict[str, str] = {}
+
+    service.handoff.create_ticket = lambda db, conversation, reason, summary_text: ticket
+    service.handoff.notify_support_group = lambda db, ticket, conversation, bot_token, group_chat_id: captured.update(
+        {"bot_token": bot_token, "group_chat_id": group_chat_id}
+    )
+    service.conversations.get_bot_profile = lambda db, bot_profile_id: bot_profile
+    service.conversations.get_default_bot_profile = lambda db: pytest.fail("转人工选群不应该再依赖默认 Bot")
+
+    result = service._handoff(None, conversation, "我要人工", SimpleNamespace(intent="human_request"))
+
+    assert result.action == "handoff"
+    assert result.intent == "human_request"
+    assert captured == {
+        "bot_token": "bot-token-from-conversation",
+        "group_chat_id": "-100200300400",
+    }

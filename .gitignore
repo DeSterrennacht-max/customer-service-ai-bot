@@ -1,0 +1,16 @@
+.DS_Store
+.venv/
+__pycache__/
+.pytest_cache/
+*.pyc
+*.pyo
+*.pyd
+node_modules/
+.next/
+.env
+backend/api/.env
+backend/worker/.env
+admin/web/.env.local
+postgres-data/
+redis-data/
+celerybeat-schedule.db

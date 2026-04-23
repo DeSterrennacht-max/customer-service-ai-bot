@@ -1,0 +1,9 @@
+{
+  "intent": "faq | knowledge | complaint | refund | human_request | unclear | other",
+  "entities": {},
+  "need_kb": true,
+  "need_tool": false,
+  "need_human": false,
+  "risk_level": "low | medium | high",
+  "clarify_needed": false
+}
