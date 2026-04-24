@@ -23,6 +23,7 @@ cp infra/env/production.env.example infra/env/production.env
 Edit `infra/env/production.env` and replace every placeholder value before the first boot:
 
 - `NEXT_PUBLIC_API_BASE_URL=https://your-domain.example`
+- `APP_PUBLIC_BASE_URL=https://your-domain.example`
 - `POSTGRES_PASSWORD`
 - `APP_SECRET_KEY`
 - `APP_DEFAULT_ADMIN_PASSWORD`
@@ -70,15 +71,13 @@ Expected result:
 
 ## 6. Configure Telegram webhook
 
-Single-bot setup:
+Saving an active Bot Profile in the admin UI automatically calls Telegram `setWebhook`. The registered webhook uses:
 
-```bash
-curl -X POST "https://api.telegram.org/bot<YOUR_BOT_TOKEN>/setWebhook" \
-  -H "Content-Type: application/json" \
-  -d '{"url":"https://your-domain.example/telegram/webhook","secret_token":"<APP_WEBHOOK_SECRET>"}'
+```text
+https://your-domain.example/telegram/webhook/<BOT_USERNAME_WITHOUT_AT>
 ```
 
-Multi-bot setup:
+Use this manual command only when you need to repair or verify a bot outside the admin UI:
 
 ```bash
 curl -X POST "https://api.telegram.org/bot<YOUR_BOT_TOKEN>/setWebhook" \

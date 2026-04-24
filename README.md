@@ -15,8 +15,9 @@
 
 ## 当前版本
 
-当前发布版本：`v1.0.4`
+当前发布版本：`v1.0.5`
 
+- `v1.0.5`: 新增 Bot Profile 保存时自动调用 Telegram `setWebhook`，启用状态的 Bot 会自动注册到生产 webhook 地址，减少新增机器人后的手工配置步骤。
 - `v1.0.4`: 修复 OpenAI/LLM 配置无效时 Telegram webhook 返回 500 的问题；当欢迎语/答案润色失败时，自动降级发送原始文本。
 - `v1.0.3`: 修复项目内 Nginx 在 API/Web 容器重建后继续使用旧容器 IP，导致 Cloudflare 502 的问题；改为通过 Docker 内置 DNS 动态解析上游服务。
 - `v1.0.2`: 修复 Docker API/Worker 镜像缺少 `email-validator` 导致 API 容器启动失败的问题。
@@ -88,7 +89,7 @@ docker compose --env-file ./env/production.env up -d --build
 
 - `https://<你的子域名>/` -> 管理后台
 - `https://<你的子域名>/health` -> API 健康检查
-- `https://<你的子域名>/telegram/webhook` -> Telegram webhook
+- `https://<你的子域名>/telegram/webhook/<bot_username>` -> Telegram webhook
 
 首轮启动可保留：
 
@@ -103,6 +104,8 @@ docker compose --env-file ./env/production.env up -d
 ```
 
 更完整的 VPS 落地步骤见 `infra/DEPLOY_VPS.md`。
+
+保存启用状态的 Bot Profile 时，后端会自动向 Telegram 注册对应的 `setWebhook`。生产环境必须配置 `APP_PUBLIC_BASE_URL`，或至少配置 `NEXT_PUBLIC_API_BASE_URL` 作为兼容 fallback。
 
 ## 下一步建议
 

@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     router_model: str = "gpt-4o-mini"
     generator_model: str = "gpt-4.1-mini"
     webhook_secret: str | None = Field(default=None)
+    public_base_url: str | None = None
     cors_allow_origins: list[str] = [
         "http://localhost:3000",
         "http://127.0.0.1:3000",

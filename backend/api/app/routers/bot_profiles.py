@@ -13,9 +13,11 @@ from backend.api.app.db.session import get_db
 from backend.api.app.dependencies import ensure_tenant_access, get_current_user, is_super_admin
 from backend.api.app.schemas.content import BotProfileCreate, BotProfileResponse, BotProfileUpdate
 from backend.api.app.services.audit_service import AuditService
+from backend.api.app.services.telegram_webhook_service import TelegramWebhookRegistrationError, TelegramWebhookService
 
 router = APIRouter(prefix="/admin/bot-profiles", tags=["bot-profiles"])
 audit_service = AuditService()
+telegram_webhook_service = TelegramWebhookService()
 
 DEFAULT_FAQ_HINT_KEYWORDS = ["价格", "套餐", "试用", "功能", "支持"]
 DEFAULT_HIGH_RISK_KEYWORDS = ["人工", "投诉", "退款", "退费", "律师", "举报"]
@@ -25,6 +27,14 @@ DEFAULT_SENSITIVE_KEYWORDS = ["骂", "骗", "垃圾", "诈骗"]
 def attach_tenant_name(bot_profile: BotProfile, tenant_name: str | None) -> BotProfile:
     setattr(bot_profile, "tenant_name", tenant_name)
     return bot_profile
+
+
+def register_telegram_webhook(bot_profile: BotProfile) -> str | None:
+    try:
+        registration = telegram_webhook_service.register_bot_profile_webhook(bot_profile)
+    except TelegramWebhookRegistrationError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    return registration.url if registration else None
 
 
 @router.get("", response_model=list[BotProfileResponse])
@@ -84,6 +94,12 @@ def create_bot_profile(
     )
     db.add(style_profile)
 
+    try:
+        webhook_url = register_telegram_webhook(bot_profile)
+    except HTTPException:
+        db.rollback()
+        raise
+
     audit_service.record(
         db=db,
         tenant_id=str(bot_profile.tenant_id),
@@ -100,6 +116,7 @@ def create_bot_profile(
             "high_risk_keywords_json": bot_profile.high_risk_keywords_json,
             "sensitive_keywords_json": bot_profile.sensitive_keywords_json,
             "is_active": bot_profile.is_active,
+            "telegram_webhook_url": webhook_url,
         },
     )
     db.commit()
@@ -130,6 +147,13 @@ def update_bot_profile(
     for key, value in updates.items():
         setattr(bot_profile, key, value)
     audit_updates = payload.model_dump(exclude_unset=True, mode="json")
+    audit_updates.pop("telegram_bot_token", None)
+    try:
+        webhook_url = register_telegram_webhook(bot_profile)
+    except HTTPException:
+        db.rollback()
+        raise
+    audit_updates["telegram_webhook_url"] = webhook_url
 
     audit_service.record(
         db=db,

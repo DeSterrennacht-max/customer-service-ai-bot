@@ -254,11 +254,11 @@ export default function BotProfilesPage() {
         if (editingBotId) {
           const payload: BotProfileUpdatePayload = basePayload;
           await api.updateBotProfile(editingBotId, payload);
-          setSubmitMessage("机器人配置已更新。");
+          setSubmitMessage("机器人配置已更新；启用状态下会自动注册 Telegram webhook。");
         } else {
           const payload: BotProfileCreatePayload = basePayload;
           await api.createBotProfile(payload);
-          setSubmitMessage("机器人配置已创建。");
+          setSubmitMessage("机器人配置已创建；启用状态下会自动注册 Telegram webhook。");
         }
 
         await reloadBots();
@@ -398,13 +398,13 @@ export default function BotProfilesPage() {
             </label>
 
             <div className="card">
-              <strong>Webhook 配置建议</strong>
-              <p>老地址：{exampleWebhookBase}</p>
+              <strong>Webhook 自动注册</strong>
+              <p>保存启用状态的机器人后，系统会自动向 Telegram 注册 webhook。</p>
               <p>
-                多 Bot 建议地址：
+                当前将注册到：
                 {form.telegram_bot_username.trim()
                   ? ` ${exampleWebhookBase}/${normalizeUsername(form.telegram_bot_username)}`
-                  : " 先填写机器人用户名，或保存后使用 Bot ID 作为标识。"}
+                  : " 先填写机器人用户名；如果为空，后端会使用 Bot Profile ID。"}
               </p>
             </div>
 
