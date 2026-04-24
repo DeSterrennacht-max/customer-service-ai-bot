@@ -15,8 +15,9 @@
 
 ## 当前版本
 
-当前发布版本：`v1.0.5`
+当前发布版本：`v1.0.6`
 
+- `v1.0.6`: 支持在后台删除 Bot Profile；删除时会先调用 Telegram `deleteWebhook`，再清理该 Bot 关联的 FAQ、知识页、会话、消息、人工工单和风格配置。
 - `v1.0.5`: 新增 Bot Profile 保存时自动调用 Telegram `setWebhook`，启用状态的 Bot 会自动注册到生产 webhook 地址，减少新增机器人后的手工配置步骤。
 - `v1.0.4`: 修复 OpenAI/LLM 配置无效时 Telegram webhook 返回 500 的问题；当欢迎语/答案润色失败时，自动降级发送原始文本。
 - `v1.0.3`: 修复项目内 Nginx 在 API/Web 容器重建后继续使用旧容器 IP，导致 Cloudflare 502 的问题；改为通过 Docker 内置 DNS 动态解析上游服务。

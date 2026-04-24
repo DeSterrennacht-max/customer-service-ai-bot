@@ -91,6 +91,42 @@ class TelegramWebhookService:
 
         return TelegramWebhookRegistration(url=webhook_url, description=data.get("description"))
 
+    def unregister_bot_profile_webhook(self, bot_profile: Any, drop_pending_updates: bool = True) -> str | None:
+        token = (getattr(bot_profile, "telegram_bot_token", None) or "").strip()
+        if not token or token == "CHANGE_ME":
+            logger.info("Skip Telegram webhook deletion because bot token is not configured.")
+            return None
+
+        payload = {"drop_pending_updates": drop_pending_updates}
+        try:
+            response = self._post(
+                f"https://api.telegram.org/bot{token}/deleteWebhook",
+                json=payload,
+                timeout=20,
+            )
+            response.raise_for_status()
+            data = response.json()
+        except httpx.HTTPStatusError as exc:
+            description = None
+            try:
+                description = exc.response.json().get("description")
+            except Exception:
+                description = None
+            raise TelegramWebhookRegistrationError(
+                f"Telegram deleteWebhook failed: {description or f'HTTP {exc.response.status_code}'}",
+                status_code=400 if exc.response.status_code in {400, 401, 404} else 502,
+            ) from exc
+        except Exception as exc:
+            raise TelegramWebhookRegistrationError("Telegram deleteWebhook request failed.") from exc
+
+        if not data.get("ok"):
+            description = data.get("description") or "Telegram API returned ok=false."
+            error_code = data.get("error_code")
+            status_code = 400 if error_code in {400, 401, 404} else 502
+            raise TelegramWebhookRegistrationError(f"Telegram deleteWebhook failed: {description}", status_code=status_code)
+
+        return data.get("description")
+
     @staticmethod
     def build_webhook_url(bot_profile: Any, public_base_url: str) -> str:
         identifier = (getattr(bot_profile, "telegram_bot_username", None) or "").strip().lstrip("@")

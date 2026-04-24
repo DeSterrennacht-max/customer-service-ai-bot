@@ -217,6 +217,32 @@ export default function BotProfilesPage() {
     setBots(nextBots);
   }
 
+  function handleDelete(bot: BotProfile) {
+    setSubmitError(null);
+    setSubmitMessage(null);
+    const confirmed = window.confirm(`确定删除机器人「${bot.name}」吗？这会删除它的 FAQ、知识页、会话记录，并注销 Telegram webhook。`);
+    if (!confirmed) {
+      return;
+    }
+
+    startTransition(async () => {
+      try {
+        await api.deleteBotProfile(bot.id);
+        if (editingBotId === bot.id) {
+          resetForm();
+        }
+        await reloadBots();
+        setSubmitMessage("机器人已删除，并已注销 Telegram webhook。");
+      } catch (deleteFailure) {
+        if (deleteFailure instanceof AuthError) {
+          router.replace("/login");
+          return;
+        }
+        setSubmitError(deleteFailure instanceof Error ? deleteFailure.message : "机器人删除失败");
+      }
+    });
+  }
+
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setSubmitError(null);
@@ -471,8 +497,11 @@ export default function BotProfilesPage() {
                     <span className={`badge${bot.is_active ? "" : " badge-muted"}`}>{bot.is_active ? "active" : "inactive"}</span>
                   </td>
                   <td>
-                    <button type="button" className="button-secondary" onClick={() => startEdit(bot)}>
+                    <button type="button" className="button-secondary button-inline" onClick={() => startEdit(bot)} disabled={isPending}>
                       编辑
+                    </button>
+                    <button type="button" className="button-danger button-inline" onClick={() => handleDelete(bot)} disabled={isPending}>
+                      删除
                     </button>
                   </td>
                 </tr>

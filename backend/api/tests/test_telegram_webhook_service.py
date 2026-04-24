@@ -106,3 +106,43 @@ def test_register_bot_profile_webhook_raises_when_telegram_rejects() -> None:
 
     assert exc_info.value.status_code == 400
     assert "Unauthorized" in str(exc_info.value)
+
+
+def test_unregister_bot_profile_webhook_calls_delete_webhook() -> None:
+    captured: dict = {}
+
+    def fake_post(url: str, **kwargs):
+        captured["url"] = url
+        captured["json"] = kwargs["json"]
+        captured["timeout"] = kwargs["timeout"]
+        return FakeResponse({"ok": True, "description": "Webhook was deleted"})
+
+    bot_profile = SimpleNamespace(
+        id=uuid4(),
+        telegram_bot_token="123456:token",
+        telegram_bot_username="support_bot",
+        is_active=True,
+    )
+    settings = Settings(app_env="production", public_base_url="https://bot.example.com")
+
+    result = TelegramWebhookService(settings=settings, post=fake_post).unregister_bot_profile_webhook(bot_profile)
+
+    assert result == "Webhook was deleted"
+    assert captured["url"] == "https://api.telegram.org/bot123456:token/deleteWebhook"
+    assert captured["json"] == {"drop_pending_updates": True}
+    assert captured["timeout"] == 20
+
+
+def test_unregister_bot_profile_webhook_skips_placeholder_token() -> None:
+    def fake_post(*args, **kwargs):
+        pytest.fail("placeholder token should not call Telegram")
+
+    bot_profile = SimpleNamespace(
+        id=uuid4(),
+        telegram_bot_token="CHANGE_ME",
+        telegram_bot_username="support_bot",
+        is_active=True,
+    )
+    settings = Settings(app_env="production", public_base_url="https://bot.example.com")
+
+    assert TelegramWebhookService(settings=settings, post=fake_post).unregister_bot_profile_webhook(bot_profile) is None

@@ -3,12 +3,12 @@ from __future__ import annotations
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, HTTPException, Response, status
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from backend.api.app.core.defaults import DEFAULT_BOT_WELCOME_MESSAGE
-from backend.api.app.db.models.entities import BotProfile, StyleProfile, Tenant
+from backend.api.app.db.models.entities import BotProfile, Conversation, FAQEntry, HandoffTicket, KnowledgeChunk, KnowledgePage, Message, PromptTemplate, StyleProfile, Tenant
 from backend.api.app.db.session import get_db
 from backend.api.app.dependencies import ensure_tenant_access, get_current_user, is_super_admin
 from backend.api.app.schemas.content import BotProfileCreate, BotProfileResponse, BotProfileUpdate
@@ -35,6 +35,13 @@ def register_telegram_webhook(bot_profile: BotProfile) -> str | None:
     except TelegramWebhookRegistrationError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
     return registration.url if registration else None
+
+
+def unregister_telegram_webhook(bot_profile: BotProfile) -> str | None:
+    try:
+        return telegram_webhook_service.unregister_bot_profile_webhook(bot_profile)
+    except TelegramWebhookRegistrationError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
 
 
 @router.get("", response_model=list[BotProfileResponse])
@@ -169,3 +176,59 @@ def update_bot_profile(
     db.refresh(bot_profile)
     tenant_name = db.scalar(select(Tenant.name).where(Tenant.id == bot_profile.tenant_id))
     return attach_tenant_name(bot_profile, tenant_name)
+
+
+@router.delete("/{bot_profile_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_bot_profile(
+    bot_profile_id: str,
+    db: Annotated[Session, Depends(get_db)],
+    user: Annotated[object, Depends(get_current_user)],
+) -> Response:
+    bot_profile = db.get(BotProfile, UUID(bot_profile_id))
+    if not bot_profile:
+        raise HTTPException(status_code=404, detail="Bot profile not found")
+    ensure_tenant_access(user, bot_profile.tenant_id)
+
+    try:
+        webhook_delete_result = unregister_telegram_webhook(bot_profile)
+    except HTTPException:
+        db.rollback()
+        raise
+
+    knowledge_page_ids = list(
+        db.scalars(select(KnowledgePage.id).where(KnowledgePage.bot_profile_id == bot_profile.id)).all()
+    )
+    conversation_ids = list(
+        db.scalars(select(Conversation.id).where(Conversation.bot_profile_id == bot_profile.id)).all()
+    )
+
+    if knowledge_page_ids:
+        db.execute(delete(KnowledgeChunk).where(KnowledgeChunk.knowledge_page_id.in_(knowledge_page_ids)))
+    if conversation_ids:
+        db.execute(delete(Message).where(Message.conversation_id.in_(conversation_ids)))
+        db.execute(delete(HandoffTicket).where(HandoffTicket.conversation_id.in_(conversation_ids)))
+
+    db.execute(delete(FAQEntry).where(FAQEntry.bot_profile_id == bot_profile.id))
+    db.execute(delete(KnowledgePage).where(KnowledgePage.bot_profile_id == bot_profile.id))
+    db.execute(delete(StyleProfile).where(StyleProfile.bot_profile_id == bot_profile.id))
+    db.execute(delete(PromptTemplate).where(PromptTemplate.bot_profile_id == bot_profile.id))
+    db.execute(delete(Conversation).where(Conversation.bot_profile_id == bot_profile.id))
+
+    audit_service.record(
+        db=db,
+        tenant_id=str(bot_profile.tenant_id),
+        actor_type="user",
+        actor_id=str(user.id),
+        action="bot_profile.deleted",
+        target_type="bot_profile",
+        target_id=str(bot_profile.id),
+        detail_json={
+            "telegram_bot_username": bot_profile.telegram_bot_username,
+            "telegram_webhook_deleted": webhook_delete_result,
+            "deleted_knowledge_pages": len(knowledge_page_ids),
+            "deleted_conversations": len(conversation_ids),
+        },
+    )
+    db.delete(bot_profile)
+    db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

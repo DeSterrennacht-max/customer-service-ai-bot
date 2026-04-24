@@ -117,6 +117,7 @@ export const api = {
     requestJSON<BotProfile>("/admin/bot-profiles", { method: "POST", body: JSON.stringify(payload) }),
   updateBotProfile: (id: string, payload: BotProfileUpdatePayload) =>
     requestJSON<BotProfile>(`/admin/bot-profiles/${id}`, { method: "PATCH", body: JSON.stringify(payload) }),
+  deleteBotProfile: (id: string) => requestJSON<void>(`/admin/bot-profiles/${id}`, { method: "DELETE" }),
   faqs: (botProfileId?: string | null) => requestJSON<FAQEntry[]>(withQuery("/admin/faqs", { bot_profile_id: botProfileId })),
   createFaq: (payload: FAQCreatePayload) =>
     requestJSON<FAQEntry>("/admin/faqs", { method: "POST", body: JSON.stringify(payload) }),
