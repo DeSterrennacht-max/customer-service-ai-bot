@@ -1,4 +1,5 @@
 import { AuthError, clearTokens, ensureAccessToken } from "@/lib/auth";
+import { getApiBaseUrl } from "@/lib/runtime-config";
 import {
   ChangePasswordPayload,
   CurrentUser,
@@ -22,8 +23,6 @@ import {
   TenantCreatePayload,
   TenantUpdatePayload
 } from "@/types/api";
-
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
 
 async function readErrorMessage(response: Response): Promise<string> {
   try {
@@ -49,7 +48,7 @@ async function requestJSON<T>(path: string, init: RequestInit = {}, retryOnUnaut
     throw new AuthError();
   }
 
-  const response = await fetch(`${API_BASE_URL}${path}`, {
+  const response = await fetch(`${getApiBaseUrl()}${path}`, {
     ...init,
     headers: {
       Accept: "application/json",

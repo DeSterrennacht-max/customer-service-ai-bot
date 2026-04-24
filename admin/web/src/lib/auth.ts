@@ -1,6 +1,5 @@
 import { TokenResponse } from "@/types/api";
-
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
+import { getApiBaseUrl } from "@/lib/runtime-config";
 const ACCESS_TOKEN_KEY = "csb_access_token";
 const REFRESH_TOKEN_KEY = "csb_refresh_token";
 
@@ -63,7 +62,7 @@ export function isAuthenticated(): boolean {
 }
 
 export async function login(username: string, password: string): Promise<TokenResponse> {
-  const response = await fetch(`${API_BASE_URL}/auth/login`, {
+  const response = await fetch(`${getApiBaseUrl()}/auth/login`, {
     method: "POST",
     headers: {
       Accept: "application/json",
@@ -87,7 +86,7 @@ export async function refreshTokens(refreshToken = getRefreshToken()): Promise<T
     throw new AuthError("Session expired");
   }
 
-  const response = await fetch(`${API_BASE_URL}/auth/refresh`, {
+  const response = await fetch(`${getApiBaseUrl()}/auth/refresh`, {
     method: "POST",
     headers: {
       Accept: "application/json",

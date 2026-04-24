@@ -11,6 +11,7 @@ node_modules/
 backend/api/.env
 backend/worker/.env
 admin/web/.env.local
+infra/env/production.env
 postgres-data/
 redis-data/
 celerybeat-schedule.db

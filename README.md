@@ -60,16 +60,39 @@ npm run dev
 
 ## Docker Compose 部署
 
+生产环境建议使用单机 `Docker Compose`，再由宿主机现有的 `Nginx` 统一处理域名和 HTTPS。这个仓库已经改成：
+
+- 只让项目内 `nginx` 监听 `127.0.0.1:18081`
+- `db`、`redis`、`api`、`web` 不直接暴露到公网
+- `web` 容器使用 Next.js 生产构建和 `next start`
+- 生产变量从未跟踪的 `infra/env/production.env` 读取
+
 ```bash
 cd infra
-docker compose up --build
+cp env/production.env.example env/production.env
+# 编辑 env/production.env，替换域名、密码、OpenAI key、webhook secret
+docker compose --env-file ./env/production.env up -d --build
 ```
 
 对外入口：
 
-- `http://localhost/` -> 管理后台
-- `http://localhost/health` -> API 健康检查
-- `http://localhost/telegram/webhook` -> Telegram webhook
+- `https://<你的子域名>/` -> 管理后台
+- `https://<你的子域名>/health` -> API 健康检查
+- `https://<你的子域名>/telegram/webhook` -> Telegram webhook
+
+首轮启动可保留：
+
+- `APP_AUTO_CREATE_SCHEMA=true`
+- `APP_BOOTSTRAP_DEMO_DATA=true`
+
+完成首轮验证后，把这两个值切回 `false`，再执行：
+
+```bash
+cd infra
+docker compose --env-file ./env/production.env up -d
+```
+
+更完整的 VPS 落地步骤见 `infra/DEPLOY_VPS.md`。
 
 ## 下一步建议
 

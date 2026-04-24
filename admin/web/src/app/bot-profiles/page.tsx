@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { Panel } from "@/components/panel";
 import { AuthError } from "@/lib/auth";
 import { api } from "@/lib/api";
+import { getApiBaseUrl } from "@/lib/runtime-config";
 import { BotProfile, BotProfileCreatePayload, BotProfileUpdatePayload, CurrentUser, TenantSummary } from "@/types/api";
 
 interface BotProfileFormState {
@@ -109,8 +110,7 @@ export default function BotProfilesPage() {
 
   const isSuperAdmin = me?.role === "super_admin";
   const exampleWebhookBase = useMemo(() => {
-    const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
-    return `${apiBase.replace(/\/$/, "")}/telegram/webhook`;
+    return `${getApiBaseUrl()}/telegram/webhook`;
   }, []);
 
   useEffect(() => {
