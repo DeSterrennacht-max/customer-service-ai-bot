@@ -15,8 +15,9 @@
 
 ## 当前版本
 
-当前发布版本：`v1.0.2`
+当前发布版本：`v1.0.3`
 
+- `v1.0.3`: 修复项目内 Nginx 在 API/Web 容器重建后继续使用旧容器 IP，导致 Cloudflare 502 的问题；改为通过 Docker 内置 DNS 动态解析上游服务。
 - `v1.0.2`: 修复 Docker API/Worker 镜像缺少 `email-validator` 导致 API 容器启动失败的问题。
 - `v1.0.1`: 增加 VPS 单机 Docker Compose 部署方案，支持宿主机 Nginx 反代到 `127.0.0.1:18081`，并补充生产环境变量模板和部署文档。
 - `v1.0.0`: 首个 MVP 发布版本，包含 FastAPI 后端、Celery worker、Next.js 管理后台、PostgreSQL/Redis、Telegram webhook 和基础客服流程。

@@ -117,6 +117,12 @@ cd infra
 docker compose --env-file ./env/production.env up -d --build
 ```
 
+If you are running a version before `v1.0.3`, restart the project Nginx after rebuilding API/Web so it does not keep stale Docker DNS results:
+
+```bash
+docker compose --env-file ./env/production.env restart nginx
+```
+
 Tail logs:
 
 ```bash
