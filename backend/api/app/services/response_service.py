@@ -129,17 +129,21 @@ class ResponseService:
         humanized = pipeline_result.text
         bot_profile = self.conversations.get_bot_profile(db, conversation.bot_profile_id) or self.conversations.get_default_bot_profile(db)
         if style:
-            if pipeline_result.structured and pipeline_result.source_type == "knowledge_page":
-                humanized = self.generator.preserve_structure(
-                    text=pipeline_result.text,
-                    banned_phrases=style.banned_phrases_json or [],
-                ).text
-            else:
-                humanized = self.generator.humanize(
-                    fact_answer=pipeline_result.text,
-                    tone=style.tone,
-                    banned_phrases=style.banned_phrases_json or [],
-                ).text
+            try:
+                if pipeline_result.structured and pipeline_result.source_type == "knowledge_page":
+                    humanized = self.generator.preserve_structure(
+                        text=pipeline_result.text,
+                        banned_phrases=style.banned_phrases_json or [],
+                    ).text
+                else:
+                    humanized = self.generator.humanize(
+                        fact_answer=pipeline_result.text,
+                        tone=style.tone,
+                        banned_phrases=style.banned_phrases_json or [],
+                    ).text
+            except Exception:
+                logger.warning("Generator LLM failed; sending original response text", exc_info=True)
+                humanized = pipeline_result.text
             if style.typing_enabled:
                 self.telegram.send_chat_action_sync(bot_profile.telegram_bot_token, conversation.telegram_chat_id)
                 delay = random.randint(style.delay_min_ms, style.delay_max_ms) / 1000

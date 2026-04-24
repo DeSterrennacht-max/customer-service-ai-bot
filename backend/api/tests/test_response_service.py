@@ -7,7 +7,7 @@ import pytest
 
 from backend.api.app.db.models.entities import MessageSource
 from backend.api.app.services.knowledge_service import RetrievedKnowledge, render_markdown_as_reply, select_knowledge_reply
-from backend.api.app.services.response_service import ResponseService
+from backend.api.app.services.response_service import PipelineResult, ResponseService
 
 
 def test_render_markdown_as_reply_keeps_links_and_lists() -> None:
@@ -174,6 +174,59 @@ def test_handle_customer_message_uses_bot_specific_welcome_message() -> None:
     assert result.intent == "welcome"
     assert result.text == "你好，这里是 A 机器人。你可以直接发问题给我。"
     assert result.evidence == ["system:welcome"]
+
+
+def test_dispatch_reply_falls_back_to_original_text_when_generator_fails() -> None:
+    service = ResponseService()
+    conversation = SimpleNamespace(
+        id=uuid4(),
+        tenant_id=uuid4(),
+        bot_profile_id=uuid4(),
+        telegram_chat_id="123456",
+    )
+    style = SimpleNamespace(
+        tone="friendly",
+        banned_phrases_json=[],
+        typing_enabled=False,
+    )
+    sent: dict[str, str] = {}
+
+    class FakeQuery:
+        def filter(self, *args, **kwargs):
+            return self
+
+        def first(self):
+            return style
+
+    class FakeDb:
+        def query(self, *args, **kwargs):
+            return FakeQuery()
+
+    class FailingGenerator:
+        def humanize(self, *args, **kwargs):
+            raise RuntimeError("llm unavailable")
+
+    service.generator = FailingGenerator()
+    service.conversations.get_bot_profile = lambda db, bot_profile_id: SimpleNamespace(telegram_bot_token="bot-token")
+    service.telegram.send_text_sync = lambda bot_token, chat_id, text: sent.update(
+        {"bot_token": bot_token, "chat_id": chat_id, "text": text}
+    ) or 10001
+    service.conversations.record_message = lambda *args, **kwargs: SimpleNamespace()
+    service.audit.record = lambda *args, **kwargs: None
+
+    result = PipelineResult(
+        action="template_reply",
+        text="你好，我是客服柠檬。",
+        evidence=["system:welcome"],
+        risk_level="low",
+        intent="welcome",
+        source_type="system",
+    )
+
+    reply = service.dispatch_reply(FakeDb(), conversation, result)
+
+    assert reply == "你好，我是客服柠檬。"
+    assert sent == {"bot_token": "bot-token", "chat_id": "123456", "text": "你好，我是客服柠檬。"}
 
 
 def test_handle_customer_message_uses_knowledge_when_faq_misses() -> None:
