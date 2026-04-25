@@ -206,6 +206,7 @@ export interface BotProfile {
   telegram_bot_username?: string | null;
   support_group_chat_id?: string | null;
   welcome_message: string;
+  unanswered_fallback_message: string;
   language: string;
   industry?: string | null;
   faq_hint_keywords_json: string[];
@@ -225,6 +226,8 @@ export interface BotProfileCreatePayload {
   telegram_bot_username?: string | null;
   support_group_chat_id?: string | null;
   welcome_message: string;
+  unanswered_fallback_message: string;
+  telegram_bot_description?: string | null;
   language: string;
   industry?: string | null;
   high_risk_keywords_json: string[];
@@ -239,6 +242,8 @@ export interface BotProfileUpdatePayload {
   telegram_bot_username?: string | null;
   support_group_chat_id?: string | null;
   welcome_message?: string;
+  unanswered_fallback_message?: string;
+  telegram_bot_description?: string | null;
   language?: string;
   industry?: string | null;
   high_risk_keywords_json?: string[];

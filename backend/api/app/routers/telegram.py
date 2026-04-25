@@ -50,6 +50,20 @@ def display_name_from_user(from_user: dict[str, Any]) -> str | None:
     return joined_name or from_user.get("username")
 
 
+def is_duplicate_customer_message(db: Session, conversation: object, message_id: str | None) -> bool:
+    if not message_id:
+        return False
+    duplicate_customer_message = db.scalar(
+        select(Message).where(
+            Message.conversation_id == conversation.id,
+            Message.channel == MessageChannel.TELEGRAM_DM,
+            Message.source == MessageSource.CUSTOMER,
+            Message.telegram_message_id == message_id,
+        )
+    )
+    return bool(duplicate_customer_message)
+
+
 async def process_telegram_webhook(
     request: Request,
     db: Session,
@@ -135,6 +149,40 @@ async def process_telegram_webhook(
         db.commit()
         return {"status": "ok", "handled": handled, "type": "group"}
 
+    if is_business_message:
+        if not business_connection_service.can_reply(business_connection):
+            db.commit()
+            return {"status": "ignored", "reason": "business_connection_cannot_reply"}
+
+        conversation = conversation_service.find_conversation(
+            db=db,
+            bot_profile=bot_profile,
+            telegram_chat_id=str(chat.get("id")),
+            telegram_business_connection_id=business_connection_id,
+        )
+        if conversation and is_duplicate_customer_message(db, conversation, message_id):
+            return {"status": "ignored", "reason": "duplicate_customer_message"}
+
+        conversation, pipeline_result = response_service.handle_business_customer_message(
+            db=db,
+            bot_profile=bot_profile,
+            conversation=conversation,
+            telegram_chat_id=str(chat.get("id")),
+            telegram_user_id=str(from_user.get("id")),
+            display_name=display_name_from_user(from_user),
+            business_connection_id=business_connection_id or "",
+            text=text,
+            raw_payload=payload.model_dump(),
+            telegram_message_id=message_id,
+        )
+        if not conversation:
+            db.commit()
+            return {"status": "ignored", "action": pipeline_result.action, "reason": pipeline_result.intent}
+
+        sent_text = response_service.dispatch_reply(db, conversation, pipeline_result)
+        db.commit()
+        return {"status": "ok", "action": pipeline_result.action, "sent_text": sent_text}
+
     conversation = conversation_service.get_or_create_conversation(
         db=db,
         bot_profile=bot_profile,
@@ -143,29 +191,8 @@ async def process_telegram_webhook(
         display_name=display_name_from_user(from_user),
         telegram_business_connection_id=business_connection_id,
     )
-    duplicate_customer_message = db.scalar(
-        select(Message).where(
-            Message.conversation_id == conversation.id,
-            Message.channel == MessageChannel.TELEGRAM_DM,
-            Message.source == MessageSource.CUSTOMER,
-            Message.telegram_message_id == message_id,
-        )
-    )
-    if duplicate_customer_message:
+    if is_duplicate_customer_message(db, conversation, message_id):
         return {"status": "ignored", "reason": "duplicate_customer_message"}
-
-    if is_business_message and not business_connection_service.can_reply(business_connection):
-        conversation_service.record_message(
-            db,
-            conversation=conversation,
-            source=MessageSource.CUSTOMER,
-            channel=MessageChannel.TELEGRAM_DM,
-            content_text=text,
-            raw_payload_json=payload.model_dump(),
-            telegram_message_id=message_id,
-        )
-        db.commit()
-        return {"status": "ok", "action": "recorded_only", "reason": "business_connection_cannot_reply"}
 
     pipeline_result = response_service.handle_customer_message(db, conversation, text, payload.model_dump(), message_id)
     sent_text = response_service.dispatch_reply(db, conversation, pipeline_result)

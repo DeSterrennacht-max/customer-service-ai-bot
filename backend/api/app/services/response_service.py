@@ -9,8 +9,8 @@ from dataclasses import dataclass
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from backend.api.app.core.defaults import DEFAULT_BOT_WELCOME_MESSAGE
-from backend.api.app.db.models.entities import Conversation, ConversationStatus, DeliveryStatus, Message, MessageChannel, MessageSource, RiskLevel, StyleProfile
+from backend.api.app.core.defaults import DEFAULT_BOT_WELCOME_MESSAGE, DEFAULT_UNANSWERED_FALLBACK_MESSAGE
+from backend.api.app.db.models.entities import BotProfile, Conversation, ConversationStatus, DeliveryStatus, Message, MessageChannel, MessageSource, RiskLevel, StyleProfile
 from backend.api.app.llm.generator_client import GeneratorLLMClient
 from backend.api.app.services.audit_service import AuditService
 from backend.api.app.services.conversation_service import ConversationService
@@ -38,7 +38,7 @@ FOLLOWUP_QUANTITY_PATTERN = re.compile(r"(\d+|[一二两三四五六七八九十
 FOLLOWUP_HINT_WORDS = ("这个", "那个", "这样", "这种", "那种", "继续", "然后", "上面", "刚才")
 PRICE_CONTEXT_WORDS = ("价格", "价钱", "多少钱", "收费", "费用", "套餐", "坐席", "标准版", "高级版")
 PRICING_FACT_QUERIES = ("标准版多少钱", "高级版多少钱", "套餐价格分别是多少", "标准版价格", "高级版价格")
-UNANSWERED_HANDOFF_NOTICE = "已为你转接人工客服，请稍等，客服会尽快回复你。"
+UNANSWERED_HANDOFF_NOTICE = DEFAULT_UNANSWERED_FALLBACK_MESSAGE
 
 
 @dataclass(slots=True)
@@ -147,10 +147,110 @@ class ResponseService:
             conversation,
             text,
             RuleRouteResult(action="handoff", intent="unanswered", risk_level="medium"),
-            customer_notice=UNANSWERED_HANDOFF_NOTICE,
+            customer_notice=self._unanswered_fallback_message(bot_profile),
         )
 
+    def handle_business_customer_message(
+        self,
+        db: Session,
+        bot_profile: BotProfile,
+        conversation: Conversation | None,
+        telegram_chat_id: str,
+        telegram_user_id: str,
+        display_name: str | None,
+        business_connection_id: str,
+        text: str,
+        raw_payload: dict,
+        telegram_message_id: str | None,
+    ) -> tuple[Conversation | None, PipelineResult]:
+        rule_result = self.rules.route(text, bot_profile=bot_profile)
+        if rule_result:
+            return None, self._ignored_business_result(rule_result.intent, rule_result.risk_level)
+
+        followup_first = bool(conversation and self._looks_like_followup(text))
+        if followup_first and conversation:
+            answer, evidence, source_type, structured = self._build_followup_answer(db, conversation, text)
+            if answer:
+                return self._record_business_reply_candidate(
+                    db=db,
+                    bot_profile=bot_profile,
+                    conversation=conversation,
+                    telegram_chat_id=telegram_chat_id,
+                    telegram_user_id=telegram_user_id,
+                    display_name=display_name,
+                    business_connection_id=business_connection_id,
+                    text=text,
+                    raw_payload=raw_payload,
+                    telegram_message_id=telegram_message_id,
+                    answer=answer,
+                    evidence=evidence,
+                    source_type=source_type,
+                    structured=structured,
+                )
+
+        answer, evidence, source_type, structured = self._retrieve_answer(db, bot_profile.id, text, "faq")
+        if answer:
+            return self._record_business_reply_candidate(
+                db=db,
+                bot_profile=bot_profile,
+                conversation=conversation,
+                telegram_chat_id=telegram_chat_id,
+                telegram_user_id=telegram_user_id,
+                display_name=display_name,
+                business_connection_id=business_connection_id,
+                text=text,
+                raw_payload=raw_payload,
+                telegram_message_id=telegram_message_id,
+                answer=answer,
+                evidence=evidence,
+                source_type=source_type,
+                structured=structured,
+            )
+
+        if not followup_first and conversation:
+            answer, evidence, source_type, structured = self._build_followup_answer(db, conversation, text)
+            if answer:
+                return self._record_business_reply_candidate(
+                    db=db,
+                    bot_profile=bot_profile,
+                    conversation=conversation,
+                    telegram_chat_id=telegram_chat_id,
+                    telegram_user_id=telegram_user_id,
+                    display_name=display_name,
+                    business_connection_id=business_connection_id,
+                    text=text,
+                    raw_payload=raw_payload,
+                    telegram_message_id=telegram_message_id,
+                    answer=answer,
+                    evidence=evidence,
+                    source_type=source_type,
+                    structured=structured,
+                )
+
+        answer, evidence, source_type, structured = self._retrieve_answer(db, bot_profile.id, text, "knowledge")
+        if answer:
+            return self._record_business_reply_candidate(
+                db=db,
+                bot_profile=bot_profile,
+                conversation=conversation,
+                telegram_chat_id=telegram_chat_id,
+                telegram_user_id=telegram_user_id,
+                display_name=display_name,
+                business_connection_id=business_connection_id,
+                text=text,
+                raw_payload=raw_payload,
+                telegram_message_id=telegram_message_id,
+                answer=answer,
+                evidence=evidence,
+                source_type=source_type,
+                structured=structured,
+            )
+
+        return None, self._ignored_business_result("unanswered", "medium")
+
     def dispatch_reply(self, db: Session, conversation: Conversation, pipeline_result: PipelineResult) -> str | None:
+        if pipeline_result.action == "ignored":
+            return None
         if pipeline_result.action == "handoff" and not pipeline_result.text:
             return None
 
@@ -252,14 +352,77 @@ class ResponseService:
         )
 
     def _build_answer(self, db: Session, conversation: Conversation, text: str, intent: str) -> tuple[str, list[str], str, bool]:
-        if intent == "faq":
-            result = self.knowledge.retrieve_faq(db, conversation.bot_profile_id, text)
-        else:
-            result = self.knowledge.retrieve_knowledge_page(db, conversation.bot_profile_id, text)
+        return self._retrieve_answer(db, conversation.bot_profile_id, text, intent)
 
+    def _retrieve_answer(self, db: Session, bot_profile_id: object, text: str, intent: str) -> tuple[str, list[str], str, bool]:
+        if intent == "faq":
+            result = self.knowledge.retrieve_faq(db, bot_profile_id, text)
+        else:
+            result = self.knowledge.retrieve_knowledge_page(db, bot_profile_id, text)
         if not result:
             return "", [], "none", False
         return result.text, result.evidence, result.source_type, result.structured
+
+    def _record_business_reply_candidate(
+        self,
+        db: Session,
+        bot_profile: BotProfile,
+        conversation: Conversation | None,
+        telegram_chat_id: str,
+        telegram_user_id: str,
+        display_name: str | None,
+        business_connection_id: str,
+        text: str,
+        raw_payload: dict,
+        telegram_message_id: str | None,
+        answer: str,
+        evidence: list[str],
+        source_type: str,
+        structured: bool,
+    ) -> tuple[Conversation, PipelineResult]:
+        if conversation is None:
+            conversation = self.conversations.get_or_create_conversation(
+                db=db,
+                bot_profile=bot_profile,
+                telegram_chat_id=telegram_chat_id,
+                telegram_user_id=telegram_user_id,
+                display_name=display_name,
+                telegram_business_connection_id=business_connection_id,
+            )
+        self.conversations.record_message(
+            db,
+            conversation=conversation,
+            source=MessageSource.CUSTOMER,
+            channel=MessageChannel.TELEGRAM_DM,
+            content_text=text,
+            raw_payload_json=raw_payload,
+            telegram_message_id=telegram_message_id,
+        )
+        return conversation, PipelineResult(
+            action="knowledge_reply" if source_type == "knowledge_page" else "template_reply",
+            text=answer,
+            evidence=evidence,
+            risk_level="low",
+            intent="knowledge" if source_type == "knowledge_page" else "faq",
+            source_type=source_type,
+            structured=structured,
+        )
+
+    @staticmethod
+    def _ignored_business_result(intent: str, risk_level: str) -> PipelineResult:
+        return PipelineResult(
+            action="ignored",
+            text="",
+            evidence=[],
+            risk_level=risk_level,
+            intent=intent,
+            source_type="business_ignored",
+        )
+
+    @staticmethod
+    def _unanswered_fallback_message(bot_profile: object) -> str:
+        configured = str(getattr(bot_profile, "unanswered_fallback_message", "") or "").strip()
+        return configured or DEFAULT_UNANSWERED_FALLBACK_MESSAGE
 
     def _build_followup_answer(self, db: Session, conversation: Conversation, text: str) -> tuple[str, list[str], str, bool]:
         if db is None or not self._looks_like_followup(text):

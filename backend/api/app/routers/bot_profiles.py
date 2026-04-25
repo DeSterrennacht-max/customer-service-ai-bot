@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from backend.api.app.core.defaults import DEFAULT_BOT_WELCOME_MESSAGE
+from backend.api.app.core.defaults import DEFAULT_BOT_WELCOME_MESSAGE, DEFAULT_UNANSWERED_FALLBACK_MESSAGE
 from backend.api.app.db.models.entities import (
     BotProfile,
     Conversation,
@@ -26,12 +26,14 @@ from backend.api.app.dependencies import ensure_tenant_access, get_current_user,
 from backend.api.app.schemas.content import BotProfileCreate, BotProfileResponse, BotProfileUpdate
 from backend.api.app.services.audit_service import AuditService
 from backend.api.app.services.telegram_business_service import TelegramBusinessConnectionService
+from backend.api.app.services.telegram_service import TelegramService
 from backend.api.app.services.telegram_webhook_service import TelegramWebhookRegistrationError, TelegramWebhookService
 
 router = APIRouter(prefix="/admin/bot-profiles", tags=["bot-profiles"])
 audit_service = AuditService()
 telegram_webhook_service = TelegramWebhookService()
 business_connection_service = TelegramBusinessConnectionService()
+telegram_service = TelegramService()
 
 DEFAULT_FAQ_HINT_KEYWORDS = ["价格", "套餐", "试用", "功能", "支持"]
 DEFAULT_HIGH_RISK_KEYWORDS = ["人工", "投诉", "退款", "退费", "律师", "举报"]
@@ -60,6 +62,20 @@ def unregister_telegram_webhook(bot_profile: BotProfile) -> str | None:
         return telegram_webhook_service.unregister_bot_profile_webhook(bot_profile)
     except TelegramWebhookRegistrationError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
+
+def normalize_unanswered_fallback_message(value: str | None) -> str:
+    normalized = (value or "").strip()
+    return normalized or DEFAULT_UNANSWERED_FALLBACK_MESSAGE
+
+
+def sync_telegram_bot_description(bot_profile: BotProfile, description: str | None) -> bool:
+    normalized = (description or "").strip()
+    if not normalized:
+        return False
+    if not telegram_service.set_bot_description_sync(bot_profile.telegram_bot_token, normalized):
+        raise HTTPException(status_code=502, detail="Telegram bot description sync failed")
+    return True
 
 
 @router.get("", response_model=list[BotProfileResponse])
@@ -91,9 +107,13 @@ def create_bot_profile(
     if not tenant:
         raise HTTPException(status_code=404, detail="Tenant not found")
 
+    create_values = payload.model_dump(exclude={"tenant_id", "telegram_bot_description"})
+    create_values["unanswered_fallback_message"] = normalize_unanswered_fallback_message(
+        create_values.get("unanswered_fallback_message")
+    )
     bot_profile = BotProfile(
         tenant_id=tenant_id,
-        **payload.model_dump(exclude={"tenant_id"}),
+        **create_values,
     )
     if not bot_profile.faq_hint_keywords_json:
         bot_profile.faq_hint_keywords_json = list(DEFAULT_FAQ_HINT_KEYWORDS)
@@ -103,6 +123,8 @@ def create_bot_profile(
         bot_profile.sensitive_keywords_json = list(DEFAULT_SENSITIVE_KEYWORDS)
     if not bot_profile.welcome_message or not bot_profile.welcome_message.strip():
         bot_profile.welcome_message = DEFAULT_BOT_WELCOME_MESSAGE
+    if not bot_profile.unanswered_fallback_message or not bot_profile.unanswered_fallback_message.strip():
+        bot_profile.unanswered_fallback_message = DEFAULT_UNANSWERED_FALLBACK_MESSAGE
     db.add(bot_profile)
     db.flush()
 
@@ -121,6 +143,7 @@ def create_bot_profile(
 
     try:
         webhook_url = register_telegram_webhook(bot_profile)
+        description_synced = sync_telegram_bot_description(bot_profile, payload.telegram_bot_description)
     except HTTPException:
         db.rollback()
         raise
@@ -137,11 +160,13 @@ def create_bot_profile(
             "telegram_bot_username": bot_profile.telegram_bot_username,
             "support_group_chat_id": bot_profile.support_group_chat_id,
             "welcome_message": bot_profile.welcome_message,
+            "unanswered_fallback_message": bot_profile.unanswered_fallback_message,
             "faq_hint_keywords_json": bot_profile.faq_hint_keywords_json,
             "high_risk_keywords_json": bot_profile.high_risk_keywords_json,
             "sensitive_keywords_json": bot_profile.sensitive_keywords_json,
             "is_active": bot_profile.is_active,
             "telegram_webhook_url": webhook_url,
+            "telegram_bot_description_synced": description_synced,
         },
     )
     db.commit()
@@ -161,9 +186,13 @@ def update_bot_profile(
         raise HTTPException(status_code=404, detail="Bot profile not found")
     ensure_tenant_access(user, bot_profile.tenant_id)
 
-    updates = payload.model_dump(exclude_unset=True)
+    updates = payload.model_dump(exclude_unset=True, exclude={"telegram_bot_description"})
     if "welcome_message" in updates and updates["welcome_message"] is not None and not updates["welcome_message"].strip():
         updates["welcome_message"] = DEFAULT_BOT_WELCOME_MESSAGE
+    if "unanswered_fallback_message" in updates:
+        updates["unanswered_fallback_message"] = normalize_unanswered_fallback_message(
+            updates.get("unanswered_fallback_message")
+        )
     if "tenant_id" in updates:
         ensure_tenant_access(user, updates["tenant_id"])
         tenant = db.get(Tenant, updates["tenant_id"])
@@ -171,14 +200,16 @@ def update_bot_profile(
             raise HTTPException(status_code=404, detail="Tenant not found")
     for key, value in updates.items():
         setattr(bot_profile, key, value)
-    audit_updates = payload.model_dump(exclude_unset=True, mode="json")
+    audit_updates = payload.model_dump(exclude_unset=True, exclude={"telegram_bot_description"}, mode="json")
     audit_updates.pop("telegram_bot_token", None)
     try:
         webhook_url = register_telegram_webhook(bot_profile)
+        description_synced = sync_telegram_bot_description(bot_profile, payload.telegram_bot_description)
     except HTTPException:
         db.rollback()
         raise
     audit_updates["telegram_webhook_url"] = webhook_url
+    audit_updates["telegram_bot_description_synced"] = description_synced
 
     audit_service.record(
         db=db,

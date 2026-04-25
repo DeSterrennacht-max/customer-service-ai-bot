@@ -31,6 +31,10 @@ class FakeBot:
         FakeBot.captured["send_chat_action"] = kwargs
         return True
 
+    async def set_my_description(self, **kwargs):
+        FakeBot.captured["set_my_description"] = kwargs
+        return True
+
 
 def test_send_text_sync_passes_business_connection_id(monkeypatch) -> None:
     FakeBot.captured = {}
@@ -64,4 +68,16 @@ def test_send_chat_action_sync_passes_business_connection_id(monkeypatch) -> Non
     assert FakeBot.captured["send_chat_action"]["chat_id"] == "6059820900"
     assert FakeBot.captured["send_chat_action"]["action"] == "typing"
     assert FakeBot.captured["send_chat_action"]["business_connection_id"] == "business-connection-1"
+    assert FakeBot.captured["session"].closed is True
+
+
+def test_set_bot_description_sync_calls_telegram_api(monkeypatch) -> None:
+    FakeBot.captured = {}
+    monkeypatch.setattr(telegram_service_module, "Bot", FakeBot)
+
+    result = TelegramService().set_bot_description_sync("bot-token", "客服 Bot 说明")
+
+    assert result is True
+    assert FakeBot.captured["token"] == "bot-token"
+    assert FakeBot.captured["set_my_description"]["description"] == "客服 Bot 说明"
     assert FakeBot.captured["session"].closed is True

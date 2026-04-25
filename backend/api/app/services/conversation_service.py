@@ -87,6 +87,26 @@ class ConversationService:
         db.flush()
         return conversation
 
+    def find_conversation(
+        self,
+        db: Session,
+        bot_profile: BotProfile,
+        telegram_chat_id: str,
+        telegram_business_connection_id: str | None = None,
+    ) -> Conversation | None:
+        business_connection_filter = (
+            Conversation.telegram_business_connection_id == telegram_business_connection_id
+            if telegram_business_connection_id
+            else Conversation.telegram_business_connection_id.is_(None)
+        )
+        return db.scalar(
+            select(Conversation).where(
+                Conversation.bot_profile_id == bot_profile.id,
+                Conversation.telegram_chat_id == telegram_chat_id,
+                business_connection_filter,
+            )
+        )
+
     def record_message(
         self,
         db: Session,

@@ -5,7 +5,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-from backend.api.app.core.defaults import DEFAULT_BOT_WELCOME_MESSAGE
+from backend.api.app.core.defaults import DEFAULT_BOT_WELCOME_MESSAGE, DEFAULT_UNANSWERED_FALLBACK_MESSAGE
 from backend.api.app.db.models.entities import RiskLevel
 from backend.api.app.schemas.common import BaseResponse
 
@@ -101,6 +101,7 @@ class BotProfileBase(BaseModel):
     telegram_bot_username: str | None = None
     support_group_chat_id: str | None = None
     welcome_message: str = DEFAULT_BOT_WELCOME_MESSAGE
+    unanswered_fallback_message: str = DEFAULT_UNANSWERED_FALLBACK_MESSAGE
     language: str = "zh"
     industry: str | None = None
     faq_hint_keywords_json: list[str] = Field(default_factory=list)
@@ -111,6 +112,7 @@ class BotProfileBase(BaseModel):
 
 class BotProfileCreate(BotProfileBase):
     tenant_id: UUID | None = None
+    telegram_bot_description: str | None = Field(default=None, max_length=512)
 
 
 class BotProfileUpdate(BaseModel):
@@ -120,12 +122,14 @@ class BotProfileUpdate(BaseModel):
     telegram_bot_username: str | None = None
     support_group_chat_id: str | None = None
     welcome_message: str | None = None
+    unanswered_fallback_message: str | None = None
     language: str | None = None
     industry: str | None = None
     faq_hint_keywords_json: list[str] | None = None
     high_risk_keywords_json: list[str] | None = None
     sensitive_keywords_json: list[str] | None = None
     is_active: bool | None = None
+    telegram_bot_description: str | None = Field(default=None, max_length=512)
 
 
 class BotProfileResponse(BaseResponse, BotProfileBase):

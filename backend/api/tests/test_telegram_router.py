@@ -191,7 +191,7 @@ def test_process_regular_message_preserves_plain_bot_path(monkeypatch: pytest.Mo
     assert db.commits == 1
 
 
-def test_process_business_message_reuses_response_pipeline(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_process_business_message_reuses_business_response_pipeline(monkeypatch: pytest.MonkeyPatch) -> None:
     profile = bot_profile()
     connection = SimpleNamespace(connection_id="business-connection-1", can_reply=True, is_enabled=True, telegram_user_id="9001")
     conversation = SimpleNamespace(id=uuid4(), telegram_business_connection_id="business-connection-1")
@@ -200,21 +200,21 @@ def test_process_business_message_reuses_response_pipeline(monkeypatch: pytest.M
     monkeypatch.setattr(telegram_router.business_connection_service, "ensure_placeholder_connection", lambda db, bot_profile, connection_id: connection)
     monkeypatch.setattr(telegram_router.business_connection_service, "can_reply", lambda connection: True)
 
-    def fake_get_or_create_conversation(**kwargs):
+    def fake_find_conversation(**kwargs):
         captured["conversation_kwargs"] = kwargs
         return conversation
 
-    def fake_handle_customer_message(db, conversation, text, raw_payload, telegram_message_id):
+    def fake_handle_business_customer_message(**kwargs):
         captured["pipeline"] = {
-            "conversation": conversation,
-            "text": text,
-            "telegram_message_id": telegram_message_id,
-            "business_connection_id": raw_payload["business_message"]["business_connection_id"],
+            "conversation": kwargs["conversation"],
+            "text": kwargs["text"],
+            "telegram_message_id": kwargs["telegram_message_id"],
+            "business_connection_id": kwargs["business_connection_id"],
         }
-        return SimpleNamespace(action="template_reply")
+        return conversation, SimpleNamespace(action="template_reply")
 
-    monkeypatch.setattr(telegram_router.conversation_service, "get_or_create_conversation", fake_get_or_create_conversation)
-    monkeypatch.setattr(telegram_router.response_service, "handle_customer_message", fake_handle_customer_message)
+    monkeypatch.setattr(telegram_router.conversation_service, "find_conversation", fake_find_conversation)
+    monkeypatch.setattr(telegram_router.response_service, "handle_business_customer_message", fake_handle_business_customer_message)
     monkeypatch.setattr(telegram_router.response_service, "dispatch_reply", lambda db, conversation, pipeline_result: "Business reply")
     db = FakeDb()
 
@@ -244,23 +244,68 @@ def test_process_business_message_reuses_response_pipeline(monkeypatch: pytest.M
     assert db.commits == 1
 
 
-def test_process_business_message_records_only_without_reply_permission(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_process_business_message_ignores_miss_without_dispatch(monkeypatch: pytest.MonkeyPatch) -> None:
     profile = bot_profile()
-    connection = SimpleNamespace(connection_id="business-connection-1", can_reply=False, is_enabled=True, telegram_user_id="9001")
-    conversation = SimpleNamespace(id=uuid4(), telegram_business_connection_id="business-connection-1")
-    captured: dict = {}
+    connection = SimpleNamespace(connection_id="business-connection-1", can_reply=True, is_enabled=True, telegram_user_id="9001")
     monkeypatch.setattr(telegram_router, "resolve_webhook_bot_profile", lambda db, bot_identifier: profile)
     monkeypatch.setattr(telegram_router.business_connection_service, "ensure_placeholder_connection", lambda db, bot_profile, connection_id: connection)
-    monkeypatch.setattr(telegram_router.business_connection_service, "can_reply", lambda connection: False)
-    monkeypatch.setattr(telegram_router.conversation_service, "get_or_create_conversation", lambda **kwargs: conversation)
+    monkeypatch.setattr(telegram_router.business_connection_service, "can_reply", lambda connection: True)
+    monkeypatch.setattr(telegram_router.conversation_service, "find_conversation", lambda **kwargs: None)
     monkeypatch.setattr(
-        telegram_router.conversation_service,
-        "record_message",
-        lambda *args, **kwargs: captured.update({"recorded": kwargs}),
+        telegram_router.response_service,
+        "handle_business_customer_message",
+        lambda **kwargs: (None, SimpleNamespace(action="ignored", intent="unanswered")),
     )
     monkeypatch.setattr(
         telegram_router.response_service,
-        "handle_customer_message",
+        "dispatch_reply",
+        lambda *args, **kwargs: pytest.fail("Ignored Business miss should not be dispatched"),
+    )
+    db = FakeDb()
+
+    result = asyncio.run(
+        process_telegram_webhook(
+            request=FakeRequest(
+                {
+                    "update_id": 31,
+                    "business_message": {
+                        "business_connection_id": "business-connection-1",
+                        "message_id": 203,
+                        "chat": {"id": 6059820900, "type": "private"},
+                        "from": {"id": 6059820900, "username": "customer"},
+                        "text": "一个没有命中的问题",
+                    },
+                }
+            ),
+            db=db,
+            x_telegram_bot_api_secret_token=telegram_router.settings.webhook_secret,
+            bot_identifier="support_bot",
+        )
+    )
+
+    assert result == {"status": "ignored", "action": "ignored", "reason": "unanswered"}
+    assert db.commits == 1
+
+
+def test_process_business_message_ignores_without_reply_permission(monkeypatch: pytest.MonkeyPatch) -> None:
+    profile = bot_profile()
+    connection = SimpleNamespace(connection_id="business-connection-1", can_reply=False, is_enabled=True, telegram_user_id="9001")
+    monkeypatch.setattr(telegram_router, "resolve_webhook_bot_profile", lambda db, bot_identifier: profile)
+    monkeypatch.setattr(telegram_router.business_connection_service, "ensure_placeholder_connection", lambda db, bot_profile, connection_id: connection)
+    monkeypatch.setattr(telegram_router.business_connection_service, "can_reply", lambda connection: False)
+    monkeypatch.setattr(
+        telegram_router.conversation_service,
+        "find_conversation",
+        lambda **kwargs: pytest.fail("Business message without reply permission should not create or load a conversation"),
+    )
+    monkeypatch.setattr(
+        telegram_router.conversation_service,
+        "record_message",
+        lambda *args, **kwargs: pytest.fail("Business message without reply permission should not be recorded"),
+    )
+    monkeypatch.setattr(
+        telegram_router.response_service,
+        "handle_business_customer_message",
         lambda *args, **kwargs: pytest.fail("Business message without reply permission should not auto-reply"),
     )
     db = FakeDb()
@@ -285,9 +330,7 @@ def test_process_business_message_records_only_without_reply_permission(monkeypa
         )
     )
 
-    assert result == {"status": "ok", "action": "recorded_only", "reason": "business_connection_cannot_reply"}
-    assert captured["recorded"]["telegram_message_id"] == "202"
-    assert captured["recorded"]["content_text"] == "价格是多少"
+    assert result == {"status": "ignored", "reason": "business_connection_cannot_reply"}
     assert db.commits == 1
 
 
@@ -298,10 +341,10 @@ def test_edited_business_message_duplicate_does_not_reply(monkeypatch: pytest.Mo
     monkeypatch.setattr(telegram_router, "resolve_webhook_bot_profile", lambda db, bot_identifier: profile)
     monkeypatch.setattr(telegram_router.business_connection_service, "ensure_placeholder_connection", lambda db, bot_profile, connection_id: connection)
     monkeypatch.setattr(telegram_router.business_connection_service, "can_reply", lambda connection: True)
-    monkeypatch.setattr(telegram_router.conversation_service, "get_or_create_conversation", lambda **kwargs: conversation)
+    monkeypatch.setattr(telegram_router.conversation_service, "find_conversation", lambda **kwargs: conversation)
     monkeypatch.setattr(
         telegram_router.response_service,
-        "handle_customer_message",
+        "handle_business_customer_message",
         lambda *args, **kwargs: pytest.fail("Duplicate edited business message should not auto-reply"),
     )
     db = FakeDb(scalar_results=[SimpleNamespace(id=uuid4())])

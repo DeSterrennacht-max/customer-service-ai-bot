@@ -73,6 +73,16 @@ class TelegramService:
         finally:
             await bot.session.close()
 
+    async def set_bot_description(self, bot_token: str, description: str) -> bool:
+        bot = Bot(token=bot_token)
+        try:
+            return await bot.set_my_description(description=description)
+        except Exception:  # pragma: no cover - network boundary
+            logger.exception("Failed to set Telegram bot description")
+            return False
+        finally:
+            await bot.session.close()
+
     def send_text_sync(
         self,
         bot_token: str,
@@ -91,3 +101,6 @@ class TelegramService:
         business_connection_id: str | None = None,
     ) -> None:
         self._run_coroutine_sync(self.send_chat_action(bot_token, chat_id, action, business_connection_id))
+
+    def set_bot_description_sync(self, bot_token: str, description: str) -> bool:
+        return bool(self._run_coroutine_sync(self.set_bot_description(bot_token, description)))

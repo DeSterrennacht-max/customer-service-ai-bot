@@ -16,6 +16,8 @@ interface BotProfileFormState {
   telegram_bot_username: string;
   support_group_chat_id: string;
   welcome_message: string;
+  unanswered_fallback_message: string;
+  telegram_bot_description: string;
   language: string;
   industry: string;
   high_risk_keywords_text: string;
@@ -25,6 +27,7 @@ interface BotProfileFormState {
 
 const DEFAULT_WELCOME_MESSAGE =
   "你好，我是客服助手。你可以直接告诉我你想了解价格、套餐、功能，或者把你遇到的问题发给我，我会先帮你处理；如果你需要人工、投诉或退款，也可以直接说。";
+const DEFAULT_UNANSWERED_FALLBACK_MESSAGE = "稍等，这会儿有点忙，我马上处理";
 
 const DEFAULT_FORM: BotProfileFormState = {
   tenant_id: "",
@@ -33,6 +36,8 @@ const DEFAULT_FORM: BotProfileFormState = {
   telegram_bot_username: "",
   support_group_chat_id: "",
   welcome_message: DEFAULT_WELCOME_MESSAGE,
+  unanswered_fallback_message: DEFAULT_UNANSWERED_FALLBACK_MESSAGE,
+  telegram_bot_description: "",
   language: "zh",
   industry: "",
   high_risk_keywords_text: "人工\n投诉\n退款\n退费\n律师\n举报",
@@ -52,6 +57,14 @@ const BOT_GUIDE = [
   {
     title: "欢迎语",
     description: "用户发送 /start 时，会直接回复这里的欢迎语。每个 Bot 都可以单独设置，不再共用一条固定文案。"
+  },
+  {
+    title: "兜底回复",
+    description: "只有普通 Bot 私聊未命中 FAQ 和知识库时，才会发送这条回复并转人工。Business 私聊未命中不会发送。"
+  },
+  {
+    title: "Bot Description",
+    description: "填写后会同步到 Telegram 的 bot description；系统不保存这段内容，留空不会修改 Telegram 当前描述。"
   },
   {
     title: "分流规则",
@@ -86,6 +99,8 @@ function botToForm(bot: BotProfile): BotProfileFormState {
     telegram_bot_username: bot.telegram_bot_username ?? "",
     support_group_chat_id: bot.support_group_chat_id ?? "",
     welcome_message: bot.welcome_message,
+    unanswered_fallback_message: bot.unanswered_fallback_message || DEFAULT_UNANSWERED_FALLBACK_MESSAGE,
+    telegram_bot_description: "",
     language: bot.language,
     industry: bot.industry ?? "",
     high_risk_keywords_text: listToText(bot.high_risk_keywords_json),
@@ -277,19 +292,24 @@ export default function BotProfilesPage() {
 
     startTransition(async () => {
       try {
-        const basePayload = {
+        const basePayload: BotProfileCreatePayload = {
           tenant_id: form.tenant_id,
           name: form.name.trim(),
           telegram_bot_token: form.telegram_bot_token.trim(),
           telegram_bot_username: normalizeUsername(form.telegram_bot_username) || null,
           support_group_chat_id: form.support_group_chat_id.trim() || null,
           welcome_message: form.welcome_message.trim() || DEFAULT_WELCOME_MESSAGE,
+          unanswered_fallback_message: form.unanswered_fallback_message.trim() || DEFAULT_UNANSWERED_FALLBACK_MESSAGE,
           language: form.language.trim() || "zh",
           industry: form.industry.trim() || null,
           high_risk_keywords_json: splitText(form.high_risk_keywords_text),
           sensitive_keywords_json: splitText(form.sensitive_keywords_text),
           is_active: form.is_active
         };
+        const botDescription = form.telegram_bot_description.trim();
+        if (botDescription) {
+          basePayload.telegram_bot_description = botDescription;
+        }
 
         if (editingBotId) {
           const payload: BotProfileUpdatePayload = basePayload;
@@ -385,6 +405,26 @@ export default function BotProfilesPage() {
               />
             </label>
 
+            <label>
+              兜底回复（普通 Bot 私聊未命中）
+              <textarea
+                rows={3}
+                value={form.unanswered_fallback_message}
+                onChange={(event) => updateForm("unanswered_fallback_message", event.target.value)}
+                placeholder={DEFAULT_UNANSWERED_FALLBACK_MESSAGE}
+              />
+            </label>
+
+            <label>
+              Bot Description（同步到 Telegram）
+              <textarea
+                rows={3}
+                value={form.telegram_bot_description}
+                onChange={(event) => updateForm("telegram_bot_description", event.target.value)}
+                placeholder="填写后保存，会同步到 Telegram；留空不修改"
+              />
+            </label>
+
             <div className="grid faq-form-grid">
               <label>
                 对应客服群 Chat ID
@@ -430,6 +470,7 @@ export default function BotProfilesPage() {
             <div className="card">
               <strong>Business Bot 接入模式</strong>
               <p>这个 Bot 可同时处理普通 Bot 私聊和 Telegram Business 账号授权后的私聊。Business 账号连接成功后，客户看到的自动回复会以该业务账号名义发出。</p>
+              <p>Business 私聊只会自动回复 FAQ 或知识库命中的答案；未命中或触发人工词时，不会私聊兜底回复，也不会转发到客服群。</p>
               <p>配置步骤：BotFather 开启 Business Mode；Telegram Business 账号在设置中连接这个 Bot；授权可访问的私聊范围、读取消息和回复权限。</p>
             </div>
 
@@ -535,6 +576,11 @@ export default function BotProfilesPage() {
                 <div className="bot-profile-section">
                   <span className="bot-profile-section-label">欢迎语</span>
                   <p className="bot-profile-message">{bot.welcome_message}</p>
+                </div>
+
+                <div className="bot-profile-section">
+                  <span className="bot-profile-section-label">兜底回复</span>
+                  <p className="bot-profile-message">{bot.unanswered_fallback_message}</p>
                 </div>
 
                 <div className="bot-profile-keyword-grid">

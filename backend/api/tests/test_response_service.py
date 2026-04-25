@@ -314,6 +314,7 @@ def test_handle_customer_message_handoffs_when_faq_and_knowledge_miss() -> None:
         sensitive_keywords_json=["诈骗"],
         telegram_bot_token="bot-token-from-conversation",
         support_group_chat_id="-100200300400",
+        unanswered_fallback_message="稍等，这会儿有点忙，我马上处理",
     )
     captured: dict[str, str] = {}
 
@@ -343,6 +344,166 @@ def test_handle_customer_message_handoffs_when_faq_and_knowledge_miss() -> None:
         "bot_token": "bot-token-from-conversation",
         "group_chat_id": "-100200300400",
     }
+
+
+def test_handle_customer_message_uses_configured_unanswered_fallback() -> None:
+    service = ResponseService()
+    conversation = SimpleNamespace(
+        bot_profile_id=uuid4(),
+        status="open",
+        tenant_id=uuid4(),
+        telegram_chat_id="123456",
+        id=uuid4(),
+    )
+    ticket = SimpleNamespace(id=uuid4())
+    bot_profile = SimpleNamespace(
+        high_risk_keywords_json=["人工"],
+        sensitive_keywords_json=["诈骗"],
+        telegram_bot_token="bot-token",
+        support_group_chat_id="-100200300400",
+        unanswered_fallback_message="我先帮你转人工，请稍等。",
+    )
+
+    service.conversations.record_message = lambda *args, **kwargs: None
+    service.conversations.get_bot_profile = lambda db, bot_profile_id: bot_profile
+    service.rules.route = lambda text, bot_profile=None: None
+    service.knowledge.retrieve_faq = lambda db, bot_profile_id, text: None
+    service.knowledge.retrieve_knowledge_page = lambda db, bot_profile_id, text: None
+    service.handoff.create_ticket = lambda *args, **kwargs: ticket
+    service.handoff.notify_support_group = lambda *args, **kwargs: None
+
+    result = service.handle_customer_message(None, conversation, "没有命中的问题", {}, None)
+
+    assert result.action == "handoff"
+    assert result.intent == "unanswered"
+    assert result.text == "我先帮你转人工，请稍等。"
+
+
+def test_handle_business_customer_message_records_and_replies_on_faq_hit() -> None:
+    service = ResponseService()
+    bot_profile = SimpleNamespace(
+        id=uuid4(),
+        tenant_id=uuid4(),
+        high_risk_keywords_json=["人工"],
+        sensitive_keywords_json=["诈骗"],
+    )
+    conversation = SimpleNamespace(
+        id=uuid4(),
+        tenant_id=bot_profile.tenant_id,
+        bot_profile_id=bot_profile.id,
+        status="open",
+        telegram_chat_id="6059820900",
+        telegram_business_connection_id="business-connection-1",
+    )
+    faq_result = RetrievedKnowledge(
+        text="标准版是 499/坐席/年。",
+        evidence=["faq:pricing"],
+        source_type="faq",
+        structured=False,
+    )
+    captured: dict = {}
+    created: dict = {}
+
+    service.rules.route = lambda text, bot_profile=None: None
+    service.knowledge.retrieve_faq = lambda db, bot_profile_id, text: faq_result
+    service.knowledge.retrieve_knowledge_page = lambda db, bot_profile_id, text: pytest.fail("FAQ 命中后不应查知识页")
+    service.conversations.get_or_create_conversation = lambda **kwargs: created.update(kwargs) or conversation
+    service.conversations.record_message = lambda *args, **kwargs: captured.update(kwargs)
+
+    resolved_conversation, result = service.handle_business_customer_message(
+        db=object(),
+        bot_profile=bot_profile,
+        conversation=None,
+        telegram_chat_id="6059820900",
+        telegram_user_id="6059820900",
+        display_name="customer",
+        business_connection_id="business-connection-1",
+        text="标准版多少钱",
+        raw_payload={"business_message": {"message_id": 201}},
+        telegram_message_id="201",
+    )
+
+    assert resolved_conversation is conversation
+    assert created["telegram_business_connection_id"] == "business-connection-1"
+    assert created["telegram_chat_id"] == "6059820900"
+    assert result.action == "template_reply"
+    assert result.intent == "faq"
+    assert result.text == "标准版是 499/坐席/年。"
+    assert captured["content_text"] == "标准版多少钱"
+    assert captured["telegram_message_id"] == "201"
+
+
+def test_handle_business_customer_message_ignores_miss_without_recording_or_handoff() -> None:
+    service = ResponseService()
+    bot_profile = SimpleNamespace(
+        id=uuid4(),
+        tenant_id=uuid4(),
+        high_risk_keywords_json=["人工"],
+        sensitive_keywords_json=["诈骗"],
+    )
+
+    service.rules.route = lambda text, bot_profile=None: None
+    service.knowledge.retrieve_faq = lambda db, bot_profile_id, text: None
+    service.knowledge.retrieve_knowledge_page = lambda db, bot_profile_id, text: None
+    service.conversations.get_or_create_conversation = lambda **kwargs: pytest.fail("Business 未命中不应创建会话")
+    service.conversations.record_message = lambda *args, **kwargs: pytest.fail("Business 未命中不应记录消息")
+    service.handoff.create_ticket = lambda *args, **kwargs: pytest.fail("Business 未命中不应转人工")
+    service.handoff.notify_support_group = lambda *args, **kwargs: pytest.fail("Business 未命中不应通知客服群")
+
+    conversation, result = service.handle_business_customer_message(
+        db=object(),
+        bot_profile=bot_profile,
+        conversation=None,
+        telegram_chat_id="6059820900",
+        telegram_user_id="6059820900",
+        display_name="customer",
+        business_connection_id="business-connection-1",
+        text="没有命中的问题",
+        raw_payload={"business_message": {"message_id": 202}},
+        telegram_message_id="202",
+    )
+
+    assert conversation is None
+    assert result.action == "ignored"
+    assert result.intent == "unanswered"
+    assert result.source_type == "business_ignored"
+
+
+def test_handle_business_customer_message_ignores_handoff_trigger_without_recording() -> None:
+    service = ResponseService()
+    bot_profile = SimpleNamespace(
+        id=uuid4(),
+        tenant_id=uuid4(),
+        high_risk_keywords_json=["人工"],
+        sensitive_keywords_json=["诈骗"],
+    )
+
+    service.rules.route = lambda text, bot_profile=None: SimpleNamespace(
+        action="handoff",
+        intent="human_request",
+        risk_level="high",
+    )
+    service.knowledge.retrieve_faq = lambda *args, **kwargs: pytest.fail("Business 人工词命中后不应查 FAQ")
+    service.knowledge.retrieve_knowledge_page = lambda *args, **kwargs: pytest.fail("Business 人工词命中后不应查知识页")
+    service.conversations.record_message = lambda *args, **kwargs: pytest.fail("Business 人工词命中不应记录消息")
+    service.handoff.create_ticket = lambda *args, **kwargs: pytest.fail("Business 人工词命中不应转人工")
+
+    conversation, result = service.handle_business_customer_message(
+        db=object(),
+        bot_profile=bot_profile,
+        conversation=None,
+        telegram_chat_id="6059820900",
+        telegram_user_id="6059820900",
+        display_name="customer",
+        business_connection_id="business-connection-1",
+        text="我要人工",
+        raw_payload={"business_message": {"message_id": 203}},
+        telegram_message_id="203",
+    )
+
+    assert conversation is None
+    assert result.action == "ignored"
+    assert result.intent == "human_request"
 
 
 def test_dispatch_reply_sends_unanswered_handoff_notice_to_customer() -> None:
