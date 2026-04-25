@@ -131,6 +131,9 @@ class BotProfileUpdate(BaseModel):
 class BotProfileResponse(BaseResponse, BotProfileBase):
     tenant_id: UUID
     tenant_name: str | None = None
+    business_connection_status: str = "not_connected"
+    business_connection_id: str | None = None
+    business_connection_updated_at: datetime | None = None
 
 
 class TenantResponse(BaseResponse):

@@ -157,6 +157,7 @@ class ResponseService:
         style = db.query(StyleProfile).filter(StyleProfile.bot_profile_id == conversation.bot_profile_id).first()
         humanized = pipeline_result.text
         bot_profile = self.conversations.get_bot_profile(db, conversation.bot_profile_id) or self.conversations.get_default_bot_profile(db)
+        business_connection_id = getattr(conversation, "telegram_business_connection_id", None)
         if style and pipeline_result.action != "handoff":
             try:
                 if pipeline_result.structured and pipeline_result.source_type == "knowledge_page":
@@ -174,18 +175,37 @@ class ResponseService:
                 logger.warning("Generator LLM failed; sending original response text", exc_info=True)
                 humanized = pipeline_result.text
             if style.typing_enabled:
-                self.telegram.send_chat_action_sync(bot_profile.telegram_bot_token, conversation.telegram_chat_id)
+                if business_connection_id:
+                    self.telegram.send_chat_action_sync(
+                        bot_profile.telegram_bot_token,
+                        conversation.telegram_chat_id,
+                        business_connection_id=business_connection_id,
+                    )
+                else:
+                    self.telegram.send_chat_action_sync(bot_profile.telegram_bot_token, conversation.telegram_chat_id)
                 delay = random.randint(style.delay_min_ms, style.delay_max_ms) / 1000
                 time.sleep(delay)
 
-        telegram_message_id = self.telegram.send_text_sync(bot_profile.telegram_bot_token, conversation.telegram_chat_id, humanized)
+        if business_connection_id:
+            telegram_message_id = self.telegram.send_text_sync(
+                bot_profile.telegram_bot_token,
+                conversation.telegram_chat_id,
+                humanized,
+                business_connection_id=business_connection_id,
+            )
+        else:
+            telegram_message_id = self.telegram.send_text_sync(bot_profile.telegram_bot_token, conversation.telegram_chat_id, humanized)
         message = self.conversations.record_message(
             db,
             conversation=conversation,
             source=MessageSource.BOT,
             channel=MessageChannel.TELEGRAM_DM,
             content_text=humanized,
-            raw_payload_json={"evidence": pipeline_result.evidence, "source_type": pipeline_result.source_type},
+            raw_payload_json={
+                "evidence": pipeline_result.evidence,
+                "source_type": pipeline_result.source_type,
+                "business_connection_id": business_connection_id,
+            },
             telegram_message_id=str(telegram_message_id) if telegram_message_id else None,
             intent=pipeline_result.intent,
             risk_level=RiskLevel(pipeline_result.risk_level),
@@ -205,6 +225,7 @@ class ResponseService:
                 "source_type": pipeline_result.source_type,
                 "evidence": pipeline_result.evidence,
                 "sent": bool(telegram_message_id),
+                "business_connection_id": business_connection_id,
             },
         )
         return humanized

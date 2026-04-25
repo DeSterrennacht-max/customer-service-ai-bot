@@ -13,6 +13,7 @@ from backend.api.app.schemas.telegram import TelegramWebhookPayload
 from backend.api.app.services.conversation_service import ConversationService
 from backend.api.app.services.handoff_service import HandoffService
 from backend.api.app.services.response_service import ResponseService
+from backend.api.app.services.telegram_business_service import TelegramBusinessConnectionService
 from backend.api.app.services.tenant_service import is_tenant_operational
 
 router = APIRouter(prefix="/telegram", tags=["telegram"])
@@ -21,6 +22,7 @@ settings = get_settings()
 conversation_service = ConversationService()
 handoff_service = HandoffService()
 response_service = ResponseService()
+business_connection_service = TelegramBusinessConnectionService()
 
 
 def resolve_webhook_bot_profile(db: Session, bot_identifier: str | None) -> object:
@@ -39,6 +41,15 @@ def resolve_webhook_bot_profile(db: Session, bot_identifier: str | None) -> obje
     return bot_profile
 
 
+def display_name_from_user(from_user: dict[str, Any]) -> str | None:
+    full_name = str(from_user.get("full_name") or "").strip()
+    if full_name:
+        return full_name
+    name_parts = [str(from_user.get("first_name") or "").strip(), str(from_user.get("last_name") or "").strip()]
+    joined_name = " ".join(part for part in name_parts if part)
+    return joined_name or from_user.get("username")
+
+
 async def process_telegram_webhook(
     request: Request,
     db: Session,
@@ -49,9 +60,43 @@ async def process_telegram_webhook(
         raise HTTPException(status_code=401, detail="Invalid webhook secret")
 
     payload = TelegramWebhookPayload.model_validate(await request.json())
-    message = payload.message or payload.edited_message
+    if not (
+        payload.business_connection
+        or payload.deleted_business_messages
+        or payload.business_message
+        or payload.edited_business_message
+        or payload.message
+        or payload.edited_message
+    ):
+        return {"status": "ignored"}
+
+    bot_profile = resolve_webhook_bot_profile(db, bot_identifier)
+
+    if payload.business_connection:
+        connection = business_connection_service.upsert_business_connection(db, bot_profile, payload.business_connection)
+        db.commit()
+        return {
+            "status": "ok",
+            "type": "business_connection",
+            "connection_id": connection.connection_id if connection else None,
+            "can_reply": connection.can_reply if connection else False,
+        }
+
+    if payload.deleted_business_messages:
+        db.commit()
+        return {"status": "ignored", "type": "deleted_business_messages"}
+
+    message = payload.business_message or payload.edited_business_message or payload.message or payload.edited_message
     if not message:
         return {"status": "ignored"}
+
+    is_business_message = bool(payload.business_message or payload.edited_business_message)
+    business_connection_id = str(message.get("business_connection_id") or "").strip() if is_business_message else None
+    business_connection = None
+    if is_business_message:
+        if not business_connection_id:
+            return {"status": "ignored", "reason": "missing_business_connection_id"}
+        business_connection = business_connection_service.ensure_placeholder_connection(db, bot_profile, business_connection_id)
 
     chat = message.get("chat", {})
     from_user = message.get("from", {})
@@ -60,8 +105,14 @@ async def process_telegram_webhook(
     reply_to_message = message.get("reply_to_message") or {}
     reply_to_message_id = str(reply_to_message.get("message_id")) if reply_to_message.get("message_id") else None
 
-    bot_profile = resolve_webhook_bot_profile(db, bot_identifier)
     chat_type = chat.get("type")
+
+    business_user_id = str(business_connection.telegram_user_id) if business_connection and business_connection.telegram_user_id else ""
+    if is_business_message and business_user_id and str(from_user.get("id") or "") == business_user_id:
+        return {"status": "ignored", "reason": "business_account_outbound"}
+
+    if is_business_message and chat_type not in {"private", None}:
+        return {"status": "ignored", "reason": "business_message_not_private"}
 
     if chat_type in {"group", "supergroup"}:
         duplicate_group_message = db.scalar(
@@ -89,7 +140,8 @@ async def process_telegram_webhook(
         bot_profile=bot_profile,
         telegram_chat_id=str(chat.get("id")),
         telegram_user_id=str(from_user.get("id")),
-        display_name=from_user.get("full_name") or from_user.get("username"),
+        display_name=display_name_from_user(from_user),
+        telegram_business_connection_id=business_connection_id,
     )
     duplicate_customer_message = db.scalar(
         select(Message).where(
@@ -101,6 +153,20 @@ async def process_telegram_webhook(
     )
     if duplicate_customer_message:
         return {"status": "ignored", "reason": "duplicate_customer_message"}
+
+    if is_business_message and not business_connection_service.can_reply(business_connection):
+        conversation_service.record_message(
+            db,
+            conversation=conversation,
+            source=MessageSource.CUSTOMER,
+            channel=MessageChannel.TELEGRAM_DM,
+            content_text=text,
+            raw_payload_json=payload.model_dump(),
+            telegram_message_id=message_id,
+        )
+        db.commit()
+        return {"status": "ok", "action": "recorded_only", "reason": "business_connection_cannot_reply"}
+
     pipeline_result = response_service.handle_customer_message(db, conversation, text, payload.model_dump(), message_id)
     sent_text = response_service.dispatch_reply(db, conversation, pipeline_result)
     db.commit()

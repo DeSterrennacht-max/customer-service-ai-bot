@@ -55,7 +55,13 @@ class HandoffService:
     def _extract_username_from_payload(self, payload: dict[str, Any] | None) -> str | None:
         if not payload:
             return None
-        message = payload.get("message") or payload.get("edited_message") or {}
+        message = (
+            payload.get("message")
+            or payload.get("edited_message")
+            or payload.get("business_message")
+            or payload.get("edited_business_message")
+            or {}
+        )
         from_user = message.get("from") or {}
         username = from_user.get("username")
         if not username:
@@ -183,7 +189,16 @@ class HandoffService:
         if not conversation:
             return False
 
-        outbound_id = self.telegram.send_text_sync(bot_token, conversation.telegram_chat_id, text)
+        business_connection_id = getattr(conversation, "telegram_business_connection_id", None)
+        if business_connection_id:
+            outbound_id = self.telegram.send_text_sync(
+                bot_token,
+                conversation.telegram_chat_id,
+                text,
+                business_connection_id=business_connection_id,
+            )
+        else:
+            outbound_id = self.telegram.send_text_sync(bot_token, conversation.telegram_chat_id, text)
         db.add(
             Message(
                 tenant_id=conversation.tenant_id,
@@ -196,6 +211,7 @@ class HandoffService:
                 raw_payload_json={
                     "handoff_ticket_id": str(ticket.id),
                     "outbound_customer_message_id": str(outbound_id) if outbound_id else None,
+                    "business_connection_id": business_connection_id,
                 },
                 risk_level=RiskLevel.MEDIUM,
             )

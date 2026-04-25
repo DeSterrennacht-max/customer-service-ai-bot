@@ -149,6 +149,60 @@ def test_handle_group_reply_accepts_customer_sync_message_reference() -> None:
     assert agent_message.telegram_message_id == "3002"
 
 
+def test_handle_group_reply_forwards_with_business_connection_id() -> None:
+    service = HandoffService()
+    ticket_id = uuid4()
+    conversation_id = uuid4()
+    captured: dict = {}
+    conversation = SimpleNamespace(
+        id=conversation_id,
+        tenant_id=uuid4(),
+        telegram_chat_id="6059820900",
+        telegram_business_connection_id="business-connection-1",
+        last_message_at=None,
+    )
+    ticket = SimpleNamespace(
+        id=ticket_id,
+        conversation_id=conversation_id,
+        group_chat_id="-100300400500",
+        status=HandoffStatus.ACTIVE,
+    )
+    db = HandoffDbSession(
+        group_messages=[
+            SimpleNamespace(
+                raw_payload_json={
+                    "handoff_ticket_id": str(ticket_id),
+                    "handoff_group_message_type": "summary",
+                }
+            )
+        ],
+        objects={
+            ticket_id: ticket,
+            conversation_id: conversation,
+        },
+    )
+
+    def fake_send_text_sync(bot_token: str, chat_id: str, text: str, **kwargs):
+        captured.update({"bot_token": bot_token, "chat_id": chat_id, "text": text, **kwargs})
+        return 90002
+
+    service.telegram.send_text_sync = fake_send_text_sync
+    service.audit.record = lambda **kwargs: None
+
+    handled = service.handle_group_reply(
+        db=db,
+        group_chat_id="-100300400500",
+        incoming_group_message_id="3003",
+        reply_to_message_id="2002",
+        text="您好，我来接手处理。",
+        bot_token="bot-token",
+    )
+
+    assert handled is True
+    assert captured["business_connection_id"] == "business-connection-1"
+    assert db.added[0].raw_payload_json["business_connection_id"] == "business-connection-1"
+
+
 def test_release_stale_conversations_releases_only_expired_handoffs() -> None:
     service = HandoffService()
     now = datetime.now(timezone.utc)

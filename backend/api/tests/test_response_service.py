@@ -388,6 +388,57 @@ def test_dispatch_reply_sends_unanswered_handoff_notice_to_customer() -> None:
     assert sent == {"bot_token": "bot-token", "chat_id": "123456", "text": UNANSWERED_HANDOFF_NOTICE}
 
 
+def test_dispatch_reply_sends_business_message_with_connection_id() -> None:
+    service = ResponseService()
+    conversation = SimpleNamespace(
+        id=uuid4(),
+        tenant_id=uuid4(),
+        bot_profile_id=uuid4(),
+        telegram_chat_id="123456",
+        telegram_business_connection_id="business-connection-1",
+    )
+    sent: dict[str, str] = {}
+
+    class EmptyQuery:
+        def filter(self, *args, **kwargs):
+            return self
+
+        def first(self):
+            return None
+
+    class FakeDb:
+        def query(self, *args, **kwargs):
+            return EmptyQuery()
+
+    def fake_send_text_sync(bot_token: str, chat_id: str, text: str, **kwargs):
+        sent.update({"bot_token": bot_token, "chat_id": chat_id, "text": text, **kwargs})
+        return 10003
+
+    service.conversations.get_bot_profile = lambda db, bot_profile_id: SimpleNamespace(telegram_bot_token="bot-token")
+    service.telegram.send_text_sync = fake_send_text_sync
+    service.conversations.record_message = lambda *args, **kwargs: SimpleNamespace()
+    service.audit.record = lambda *args, **kwargs: None
+
+    result = PipelineResult(
+        action="template_reply",
+        text="这是 Business 回复。",
+        evidence=["faq:test"],
+        risk_level="low",
+        intent="faq",
+        source_type="faq",
+    )
+
+    reply = service.dispatch_reply(FakeDb(), conversation, result)
+
+    assert reply == "这是 Business 回复。"
+    assert sent == {
+        "bot_token": "bot-token",
+        "chat_id": "123456",
+        "text": "这是 Business 回复。",
+        "business_connection_id": "business-connection-1",
+    }
+
+
 def test_followup_message_reuses_recent_context_before_generic_knowledge_lookup() -> None:
     service = ResponseService()
     conversation = SimpleNamespace(

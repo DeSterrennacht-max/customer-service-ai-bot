@@ -60,6 +60,10 @@ const BOT_GUIDE = [
   {
     title: "高风险 / 敏感词",
     description: "高风险词适合退款、投诉、律师介入；敏感词适合辱骂、诈骗等场景。支持逗号或换行分隔。"
+  },
+  {
+    title: "Business Bot 接入",
+    description: "BotFather 开启 Business Mode 后，让 Telegram Business 账号连接这个 Bot，并授权读取消息和回复权限。"
   }
 ] as const;
 
@@ -92,6 +96,16 @@ function botToForm(bot: BotProfile): BotProfileFormState {
 
 function normalizeUsername(value: string): string {
   return value.trim().replace(/^@+/, "");
+}
+
+function businessConnectionLabel(bot: BotProfile): string {
+  if (bot.business_connection_status === "ready") {
+    return "可自动回复";
+  }
+  if (bot.business_connection_status === "connected_no_reply") {
+    return "已连接，缺少回复权限";
+  }
+  return "未连接";
 }
 
 export default function BotProfilesPage() {
@@ -414,6 +428,12 @@ export default function BotProfilesPage() {
             </div>
 
             <div className="card">
+              <strong>Business Bot 接入模式</strong>
+              <p>这个 Bot 可同时处理普通 Bot 私聊和 Telegram Business 账号授权后的私聊。Business 账号连接成功后，客户看到的自动回复会以该业务账号名义发出。</p>
+              <p>配置步骤：BotFather 开启 Business Mode；Telegram Business 账号在设置中连接这个 Bot；授权可访问的私聊范围、读取消息和回复权限。</p>
+            </div>
+
+            <div className="card">
               <strong>当前回答顺序</strong>
               <p>人工词命中后直接转人工；其他消息不再靠关键词判断 FAQ 或知识页，而是固定先查 FAQ，再查知识页，最后才澄清。</p>
             </div>
@@ -473,6 +493,7 @@ export default function BotProfilesPage() {
                 <th>所属客户</th>
                 <th>用户名</th>
                 <th>客服群</th>
+                <th>Business 接入</th>
                 <th>欢迎语</th>
                 <th>高风险词</th>
                 <th>敏感词</th>
@@ -490,6 +511,10 @@ export default function BotProfilesPage() {
                   <td>{bot.tenant_name ?? bot.tenant_id}</td>
                   <td>{bot.telegram_bot_username ? `@${bot.telegram_bot_username.replace(/^@+/, "")}` : "未填写"}</td>
                   <td>{bot.support_group_chat_id ?? "未填写"}</td>
+                  <td>
+                    <span className={`badge${bot.business_connection_status === "ready" ? "" : " badge-muted"}`}>{businessConnectionLabel(bot)}</span>
+                    {bot.business_connection_id ? <div className="table-subtext">ID: {bot.business_connection_id}</div> : null}
+                  </td>
                   <td>{bot.welcome_message}</td>
                   <td>{bot.high_risk_keywords_json.join(" / ") || "未设置"}</td>
                   <td>{bot.sensitive_keywords_json.join(" / ") || "未设置"}</td>

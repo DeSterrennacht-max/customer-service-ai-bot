@@ -65,6 +65,7 @@ export interface Conversation {
   bot_profile_id: string;
   telegram_user_id: string;
   telegram_chat_id: string;
+  telegram_business_connection_id?: string | null;
   customer_display_name?: string | null;
   status: ConversationStatus;
   last_message_at?: string | null;
@@ -211,6 +212,9 @@ export interface BotProfile {
   high_risk_keywords_json: string[];
   sensitive_keywords_json: string[];
   is_active: boolean;
+  business_connection_status: "not_connected" | "connected_no_reply" | "ready";
+  business_connection_id?: string | null;
+  business_connection_updated_at?: string | null;
   created_at: string;
 }
 

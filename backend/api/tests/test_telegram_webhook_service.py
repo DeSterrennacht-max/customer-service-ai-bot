@@ -6,7 +6,7 @@ from uuid import uuid4
 import pytest
 
 from backend.api.app.core.config import Settings
-from backend.api.app.services.telegram_webhook_service import TelegramWebhookRegistrationError, TelegramWebhookService
+from backend.api.app.services.telegram_webhook_service import TELEGRAM_ALLOWED_UPDATES, TelegramWebhookRegistrationError, TelegramWebhookService
 
 
 class FakeResponse:
@@ -45,6 +45,7 @@ def test_register_bot_profile_webhook_uses_username_and_secret() -> None:
     assert captured["url"] == "https://api.telegram.org/bot123456:token/setWebhook"
     assert captured["json"] == {
         "url": "https://bot.example.com/telegram/webhook/support_bot",
+        "allowed_updates": TELEGRAM_ALLOWED_UPDATES,
         "secret_token": "secret-token",
     }
     assert captured["timeout"] == 20
@@ -71,7 +72,10 @@ def test_register_bot_profile_webhook_falls_back_to_next_public_base_url(monkeyp
 
     assert result is not None
     assert result.url == f"https://customer-service-admin.example.com/telegram/webhook/{bot_id}"
-    assert captured["json"] == {"url": f"https://customer-service-admin.example.com/telegram/webhook/{bot_id}"}
+    assert captured["json"] == {
+        "url": f"https://customer-service-admin.example.com/telegram/webhook/{bot_id}",
+        "allowed_updates": TELEGRAM_ALLOWED_UPDATES,
+    }
 
 
 def test_register_bot_profile_webhook_skips_inactive_bot() -> None:

@@ -8,24 +8,42 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from backend.api.app.core.defaults import DEFAULT_BOT_WELCOME_MESSAGE
-from backend.api.app.db.models.entities import BotProfile, Conversation, FAQEntry, HandoffTicket, KnowledgeChunk, KnowledgePage, Message, PromptTemplate, StyleProfile, Tenant
+from backend.api.app.db.models.entities import (
+    BotProfile,
+    Conversation,
+    FAQEntry,
+    HandoffTicket,
+    KnowledgeChunk,
+    KnowledgePage,
+    Message,
+    PromptTemplate,
+    StyleProfile,
+    TelegramBusinessConnection,
+    Tenant,
+)
 from backend.api.app.db.session import get_db
 from backend.api.app.dependencies import ensure_tenant_access, get_current_user, is_super_admin
 from backend.api.app.schemas.content import BotProfileCreate, BotProfileResponse, BotProfileUpdate
 from backend.api.app.services.audit_service import AuditService
+from backend.api.app.services.telegram_business_service import TelegramBusinessConnectionService
 from backend.api.app.services.telegram_webhook_service import TelegramWebhookRegistrationError, TelegramWebhookService
 
 router = APIRouter(prefix="/admin/bot-profiles", tags=["bot-profiles"])
 audit_service = AuditService()
 telegram_webhook_service = TelegramWebhookService()
+business_connection_service = TelegramBusinessConnectionService()
 
 DEFAULT_FAQ_HINT_KEYWORDS = ["价格", "套餐", "试用", "功能", "支持"]
 DEFAULT_HIGH_RISK_KEYWORDS = ["人工", "投诉", "退款", "退费", "律师", "举报"]
 DEFAULT_SENSITIVE_KEYWORDS = ["骂", "骗", "垃圾", "诈骗"]
 
 
-def attach_tenant_name(bot_profile: BotProfile, tenant_name: str | None) -> BotProfile:
+def attach_tenant_name(bot_profile: BotProfile, tenant_name: str | None, db: Session | None = None) -> BotProfile:
     setattr(bot_profile, "tenant_name", tenant_name)
+    connection = business_connection_service.latest_for_bot(db, bot_profile.id) if db else None
+    setattr(bot_profile, "business_connection_status", business_connection_service.connection_status(connection))
+    setattr(bot_profile, "business_connection_id", connection.connection_id if connection else None)
+    setattr(bot_profile, "business_connection_updated_at", connection.updated_at if connection else None)
     return bot_profile
 
 
@@ -58,7 +76,7 @@ def list_bot_profiles(
         statement = statement.where(BotProfile.tenant_id == user.tenant_id)
 
     rows = db.execute(statement.order_by(BotProfile.created_at.desc())).all()
-    return [attach_tenant_name(bot_profile, tenant_name) for bot_profile, tenant_name in rows]
+    return [attach_tenant_name(bot_profile, tenant_name, db) for bot_profile, tenant_name in rows]
 
 
 @router.post("", response_model=BotProfileResponse)
@@ -128,7 +146,7 @@ def create_bot_profile(
     )
     db.commit()
     db.refresh(bot_profile)
-    return attach_tenant_name(bot_profile, tenant.name)
+    return attach_tenant_name(bot_profile, tenant.name, db)
 
 
 @router.patch("/{bot_profile_id}", response_model=BotProfileResponse)
@@ -175,7 +193,7 @@ def update_bot_profile(
     db.commit()
     db.refresh(bot_profile)
     tenant_name = db.scalar(select(Tenant.name).where(Tenant.id == bot_profile.tenant_id))
-    return attach_tenant_name(bot_profile, tenant_name)
+    return attach_tenant_name(bot_profile, tenant_name, db)
 
 
 @router.delete("/{bot_profile_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -212,6 +230,7 @@ def delete_bot_profile(
     db.execute(delete(KnowledgePage).where(KnowledgePage.bot_profile_id == bot_profile.id))
     db.execute(delete(StyleProfile).where(StyleProfile.bot_profile_id == bot_profile.id))
     db.execute(delete(PromptTemplate).where(PromptTemplate.bot_profile_id == bot_profile.id))
+    db.execute(delete(TelegramBusinessConnection).where(TelegramBusinessConnection.bot_profile_id == bot_profile.id))
     db.execute(delete(Conversation).where(Conversation.bot_profile_id == bot_profile.id))
 
     audit_service.record(

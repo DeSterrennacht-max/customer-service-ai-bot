@@ -27,6 +27,7 @@ class ConversationResponse(BaseResponse):
     bot_profile_id: UUID
     telegram_user_id: str
     telegram_chat_id: str
+    telegram_business_connection_id: str | None = None
     customer_display_name: str | None = None
     status: ConversationStatus
     last_message_at: datetime | None = None

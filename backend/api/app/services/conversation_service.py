@@ -50,11 +50,25 @@ class ConversationService:
             .limit(1)
         )
 
-    def get_or_create_conversation(self, db: Session, bot_profile: BotProfile, telegram_chat_id: str, telegram_user_id: str, display_name: str | None = None) -> Conversation:
+    def get_or_create_conversation(
+        self,
+        db: Session,
+        bot_profile: BotProfile,
+        telegram_chat_id: str,
+        telegram_user_id: str,
+        display_name: str | None = None,
+        telegram_business_connection_id: str | None = None,
+    ) -> Conversation:
+        business_connection_filter = (
+            Conversation.telegram_business_connection_id == telegram_business_connection_id
+            if telegram_business_connection_id
+            else Conversation.telegram_business_connection_id.is_(None)
+        )
         conversation = db.scalar(
             select(Conversation).where(
                 Conversation.bot_profile_id == bot_profile.id,
                 Conversation.telegram_chat_id == telegram_chat_id,
+                business_connection_filter,
             )
         )
         if conversation:
@@ -65,6 +79,7 @@ class ConversationService:
             bot_profile_id=bot_profile.id,
             telegram_user_id=telegram_user_id,
             telegram_chat_id=telegram_chat_id,
+            telegram_business_connection_id=telegram_business_connection_id,
             customer_display_name=display_name,
             status=ConversationStatus.OPEN,
         )

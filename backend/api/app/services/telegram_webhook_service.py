@@ -13,6 +13,15 @@ from backend.api.app.core.config import Settings, get_settings
 
 logger = logging.getLogger(__name__)
 
+TELEGRAM_ALLOWED_UPDATES = [
+    "message",
+    "edited_message",
+    "business_connection",
+    "business_message",
+    "edited_business_message",
+    "deleted_business_messages",
+]
+
 
 class TelegramWebhookRegistrationError(RuntimeError):
     def __init__(self, message: str, status_code: int = 502) -> None:
@@ -58,7 +67,7 @@ class TelegramWebhookService:
             return None
 
         webhook_url = self.build_webhook_url(bot_profile, base_url)
-        payload: dict[str, Any] = {"url": webhook_url}
+        payload: dict[str, Any] = {"url": webhook_url, "allowed_updates": TELEGRAM_ALLOWED_UPDATES}
         if self.settings.webhook_secret:
             payload["secret_token"] = self.settings.webhook_secret
 

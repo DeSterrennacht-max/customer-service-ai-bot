@@ -102,6 +102,34 @@ class BotProfile(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     tenant: Mapped["Tenant"] = relationship(back_populates="bot_profiles")
+    business_connections: Mapped[list["TelegramBusinessConnection"]] = relationship(back_populates="bot_profile")
+
+
+class TelegramBusinessConnection(Base):
+    __tablename__ = "telegram_business_connections"
+    __table_args__ = (
+        UniqueConstraint("bot_profile_id", "connection_id", name="uq_telegram_business_connection_bot_connection"),
+        Index("ix_telegram_business_connections_bot_updated", "bot_profile_id", "updated_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenants.id"), index=True)
+    bot_profile_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("bot_profiles.id"), index=True)
+    connection_id: Mapped[str] = mapped_column(String(255))
+    telegram_user_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    telegram_user_chat_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    username: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    first_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    last_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    can_reply: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    connected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    rights_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    raw_payload_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    bot_profile: Mapped["BotProfile"] = relationship(back_populates="business_connections")
 
 
 class User(Base):
@@ -121,13 +149,17 @@ class User(Base):
 
 class Conversation(Base):
     __tablename__ = "conversations"
-    __table_args__ = (Index("ix_conversations_tenant_telegram_chat", "tenant_id", "telegram_chat_id"),)
+    __table_args__ = (
+        Index("ix_conversations_tenant_telegram_chat", "tenant_id", "telegram_chat_id"),
+        Index("ix_conversations_bot_business_chat", "bot_profile_id", "telegram_business_connection_id", "telegram_chat_id"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     tenant_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("tenants.id"), index=True)
     bot_profile_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("bot_profiles.id"), index=True)
     telegram_user_id: Mapped[str] = mapped_column(String(255))
     telegram_chat_id: Mapped[str] = mapped_column(String(255))
+    telegram_business_connection_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     customer_display_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     status: Mapped[ConversationStatus] = mapped_column(SqlEnum(ConversationStatus, native_enum=False), default=ConversationStatus.OPEN)
     last_message_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
