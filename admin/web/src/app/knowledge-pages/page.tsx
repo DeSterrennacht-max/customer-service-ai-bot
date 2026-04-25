@@ -358,52 +358,77 @@ export default function KnowledgePagesPage() {
         {isLoading ? <p className="muted">加载中...</p> : null}
         {error ? <p className="error-text">{error}</p> : null}
         {!isLoading && !error ? (
-          <table>
-            <thead>
-              <tr>
-                <th>标题</th>
-                <th>标签</th>
-                <th>正文摘要</th>
-                <th>风险</th>
-                <th>状态</th>
-                <th>更新时间</th>
-                <th>操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              {pages.map((page) => (
-                <tr key={page.id}>
-                  <td>{page.title}</td>
-                  <td>{page.tags_json.join(", ")}</td>
-                  <td>{summarizeMarkdown(page.body_markdown) || "暂无摘要"}</td>
-                  <td>{page.risk_level}</td>
-                  <td>{page.status}</td>
-                  <td>{page.updated_at}</td>
-                  <td>
-                    <div className="button-row">
-                      <button type="button" className="button-secondary button-inline" onClick={() => startEdit(page)}>
-                        编辑
-                      </button>
-                      {confirmDeletePageId === page.id ? (
-                        <>
-                          <button type="button" className="button-danger button-inline" onClick={() => handleDelete(page)} disabled={isPending}>
-                            确认删除
-                          </button>
-                          <button type="button" className="button-secondary button-inline" onClick={() => setConfirmDeletePageId(null)} disabled={isPending}>
-                            取消
-                          </button>
-                        </>
-                      ) : (
-                        <button type="button" className="button-danger button-inline" onClick={() => setConfirmDeletePageId(page.id)}>
-                          删除
+          <div className="content-card-list">
+            {pages.length === 0 ? <p className="muted">暂无知识页。</p> : null}
+            {pages.map((page) => (
+              <article key={page.id} className="content-card">
+                <div className="content-card-header">
+                  <div className="content-card-heading">
+                    <span className="content-card-eyebrow">标题</span>
+                    <h3>{page.title}</h3>
+                  </div>
+                  <div className="content-card-actions">
+                    <button type="button" className="button-secondary button-inline" onClick={() => startEdit(page)}>
+                      编辑
+                    </button>
+                    {confirmDeletePageId === page.id ? (
+                      <>
+                        <button type="button" className="button-danger button-inline" onClick={() => handleDelete(page)} disabled={isPending}>
+                          确认删除
                         </button>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                        <button type="button" className="button-secondary button-inline" onClick={() => setConfirmDeletePageId(null)} disabled={isPending}>
+                          取消
+                        </button>
+                      </>
+                    ) : (
+                      <button type="button" className="button-danger button-inline" onClick={() => setConfirmDeletePageId(page.id)}>
+                        删除
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                <div className="content-text-block">
+                  <span className="content-card-eyebrow">正文摘要</span>
+                  <p>{summarizeMarkdown(page.body_markdown) || "暂无摘要"}</p>
+                </div>
+
+                <div className="content-section">
+                  <span className="content-card-eyebrow">标签</span>
+                  <div className="content-chip-row">
+                    {page.tags_json.length
+                      ? page.tags_json.map((tag) => (
+                          <span key={tag} className="content-chip">
+                            {tag}
+                          </span>
+                        ))
+                      : <span className="muted">未设置</span>}
+                  </div>
+                </div>
+
+                <div className="content-meta-grid">
+                  <div className="content-meta-item">
+                    <span>风险</span>
+                    <strong>
+                      <span className={`badge${page.risk_level === "high" ? " badge-danger" : page.risk_level === "low" ? " badge-muted" : ""}`}>
+                        {page.risk_level}
+                      </span>
+                    </strong>
+                  </div>
+                  <div className="content-meta-item">
+                    <span>状态</span>
+                    <strong>
+                      <span className={`badge${page.status === "active" ? "" : " badge-muted"}`}>{page.status}</span>
+                    </strong>
+                  </div>
+                  <div className="content-meta-item">
+                    <span>更新时间</span>
+                    <strong>{page.updated_at}</strong>
+                  </div>
+                </div>
+              </article>
+            ))}
+          </div>
         ) : null}
       </Panel>
     </div>

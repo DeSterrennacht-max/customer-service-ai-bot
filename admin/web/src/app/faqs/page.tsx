@@ -377,65 +377,81 @@ export default function FAQsPage() {
         {isLoading ? <p className="muted">加载中...</p> : null}
         {error ? <p className="error-text">{error}</p> : null}
         {!isLoading && !error ? (
-          <table>
-            <thead>
-              <tr>
-                <th>问题模式</th>
-                <th>标准答案</th>
-                <th>
-                  <span className="label-with-help">
-                    风险
-                    <HelpTooltip label="风险" content={RISK_TOOLTIP} />
-                  </span>
-                </th>
-                <th>
-                  <span className="label-with-help">
-                    优先级
-                    <HelpTooltip label="优先级" content={PRIORITY_TOOLTIP} />
-                  </span>
-                </th>
-                <th>
-                  <span className="label-with-help">
-                    状态
-                    <HelpTooltip label="状态" content={STATUS_TOOLTIP} />
-                  </span>
-                </th>
-                <th>操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              {faqs.map((faq) => (
-                <tr key={faq.id}>
-                  <td>{faq.question_patterns_json.join(" / ")}</td>
-                  <td>{faq.canonical_answer}</td>
-                  <td>{faq.risk_level}</td>
-                  <td>{faq.priority}</td>
-                  <td>{faq.status}</td>
-                  <td>
-                    <div className="button-row">
-                      <button type="button" className="button-secondary button-inline" onClick={() => startEdit(faq)}>
-                        编辑
-                      </button>
-                      {confirmDeleteFaqId === faq.id ? (
-                        <>
-                          <button type="button" className="button-danger button-inline" onClick={() => handleDelete(faq)} disabled={isPending}>
-                            确认删除
-                          </button>
-                          <button type="button" className="button-secondary button-inline" onClick={() => setConfirmDeleteFaqId(null)} disabled={isPending}>
-                            取消
-                          </button>
-                        </>
-                      ) : (
-                        <button type="button" className="button-danger button-inline" onClick={() => setConfirmDeleteFaqId(faq.id)}>
-                          删除
-                        </button>
-                      )}
+          <div className="content-card-list">
+            {faqs.length === 0 ? <p className="muted">暂无 FAQ。</p> : null}
+            {faqs.map((faq) => (
+              <article key={faq.id} className="content-card">
+                <div className="content-card-header">
+                  <div className="content-card-heading">
+                    <span className="content-card-eyebrow">问题模式</span>
+                    <div className="content-chip-row">
+                      {faq.question_patterns_json.length
+                        ? faq.question_patterns_json.map((pattern) => (
+                            <span key={pattern} className="content-chip">
+                              {pattern}
+                            </span>
+                          ))
+                        : <span className="muted">未设置</span>}
                     </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                  </div>
+                  <div className="content-card-actions">
+                    <button type="button" className="button-secondary button-inline" onClick={() => startEdit(faq)}>
+                      编辑
+                    </button>
+                    {confirmDeleteFaqId === faq.id ? (
+                      <>
+                        <button type="button" className="button-danger button-inline" onClick={() => handleDelete(faq)} disabled={isPending}>
+                          确认删除
+                        </button>
+                        <button type="button" className="button-secondary button-inline" onClick={() => setConfirmDeleteFaqId(null)} disabled={isPending}>
+                          取消
+                        </button>
+                      </>
+                    ) : (
+                      <button type="button" className="button-danger button-inline" onClick={() => setConfirmDeleteFaqId(faq.id)}>
+                        删除
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                <div className="content-text-block">
+                  <span className="content-card-eyebrow">标准答案</span>
+                  <p>{faq.canonical_answer}</p>
+                </div>
+
+                <div className="content-meta-grid">
+                  <div className="content-meta-item">
+                    <span className="label-with-help">
+                      风险
+                      <HelpTooltip label="风险" content={RISK_TOOLTIP} />
+                    </span>
+                    <strong>
+                      <span className={`badge${faq.risk_level === "high" ? " badge-danger" : faq.risk_level === "low" ? " badge-muted" : ""}`}>
+                        {faq.risk_level}
+                      </span>
+                    </strong>
+                  </div>
+                  <div className="content-meta-item">
+                    <span className="label-with-help">
+                      优先级
+                      <HelpTooltip label="优先级" content={PRIORITY_TOOLTIP} />
+                    </span>
+                    <strong>{faq.priority}</strong>
+                  </div>
+                  <div className="content-meta-item">
+                    <span className="label-with-help">
+                      状态
+                      <HelpTooltip label="状态" content={STATUS_TOOLTIP} />
+                    </span>
+                    <strong>
+                      <span className={`badge${faq.status === "active" ? "" : " badge-muted"}`}>{faq.status}</span>
+                    </strong>
+                  </div>
+                </div>
+              </article>
+            ))}
+          </div>
         ) : null}
       </Panel>
     </div>

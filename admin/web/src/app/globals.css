@@ -595,6 +595,120 @@ button:disabled {
   color: var(--danger);
 }
 
+/* Content lists */
+.content-card-list {
+  display: grid;
+  gap: 18px;
+}
+
+.content-card {
+  border: 1px solid var(--line);
+  border-radius: 28px;
+  background: rgba(255, 255, 255, 0.72);
+  box-shadow: 0 18px 50px rgba(63, 52, 39, 0.08);
+  display: grid;
+  gap: 18px;
+  padding: 24px;
+}
+
+.content-card-header {
+  align-items: flex-start;
+  display: flex;
+  gap: 18px;
+  justify-content: space-between;
+}
+
+.content-card-heading {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.content-card-heading h3 {
+  color: var(--text);
+  font-size: 1.2rem;
+  line-height: 1.35;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.content-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.content-card-eyebrow,
+.content-meta-item > span {
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.content-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.content-chip {
+  border-radius: 999px;
+  background: rgba(63, 52, 39, 0.08);
+  color: var(--text-soft);
+  display: inline-flex;
+  font-size: 0.875rem;
+  line-height: 1.3;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  padding: 8px 11px;
+}
+
+.content-section,
+.content-text-block,
+.content-meta-item {
+  border: 1px solid rgba(63, 52, 39, 0.08);
+  border-radius: 18px;
+  background: rgba(250, 247, 241, 0.72);
+  padding: 14px 16px;
+}
+
+.content-section {
+  display: grid;
+  gap: 10px;
+}
+
+.content-text-block p {
+  color: var(--text-soft);
+  font-size: 0.95rem;
+  line-height: 1.8;
+  margin: 10px 0 0;
+  max-width: 90ch;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.content-meta-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.content-meta-item {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.content-meta-item strong {
+  color: var(--text);
+  font-size: 0.95rem;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
 .checkbox-row {
   display: flex;
   align-items: center;
@@ -738,7 +852,8 @@ button:disabled {
   .faq-form-grid-narrow,
   .faq-guide-grid,
   .bot-profile-meta-grid,
-  .bot-profile-keyword-grid {
+  .bot-profile-keyword-grid,
+  .content-meta-grid {
     grid-template-columns: 1fr;
   }
 
@@ -747,7 +862,16 @@ button:disabled {
     display: grid;
   }
 
+  .content-card-header {
+    align-items: stretch;
+    display: grid;
+  }
+
   .bot-profile-actions {
+    justify-content: flex-start;
+  }
+
+  .content-card-actions {
     justify-content: flex-start;
   }
 
