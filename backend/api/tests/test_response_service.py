@@ -7,7 +7,7 @@ import pytest
 
 from backend.api.app.db.models.entities import MessageSource
 from backend.api.app.services.knowledge_service import RetrievedKnowledge, render_markdown_as_reply, select_knowledge_reply
-from backend.api.app.services.response_service import PipelineResult, ResponseService
+from backend.api.app.services.response_service import PipelineResult, ResponseService, UNANSWERED_HANDOFF_NOTICE
 
 
 def test_render_markdown_as_reply_keeps_links_and_lists() -> None:
@@ -141,6 +141,7 @@ def test_handle_customer_message_prefers_faq_before_knowledge() -> None:
     service.rules.route = lambda text, bot_profile=None: None
     service.knowledge.retrieve_faq = lambda db, bot_profile_id, text: faq_result
     service.knowledge.retrieve_knowledge_page = lambda db, bot_profile_id, text: pytest.fail("FAQ 命中后不应再查知识页")
+    service.handoff.create_ticket = lambda *args, **kwargs: pytest.fail("FAQ 命中后不应转人工")
 
     result = service.handle_customer_message(None, conversation, "标准版多少钱", {}, None)
 
@@ -148,6 +149,41 @@ def test_handle_customer_message_prefers_faq_before_knowledge() -> None:
     assert result.intent == "faq"
     assert result.text == faq_result.text
     assert result.evidence == ["faq:pricing"]
+
+
+def test_function_consultation_faq_answers_without_handoff() -> None:
+    service = ResponseService()
+    conversation = SimpleNamespace(
+        bot_profile_id=uuid4(),
+        status="open",
+        tenant_id=uuid4(),
+        telegram_chat_id="123456",
+        id=uuid4(),
+    )
+    faq_result = RetrievedKnowledge(
+        text="007chat 支持多坐席客服、Telegram 接待、人工接管和知识库回复。",
+        evidence=["faq:functions"],
+        source_type="faq",
+        structured=False,
+    )
+
+    service.conversations.record_message = lambda *args, **kwargs: None
+    service.conversations.get_bot_profile = lambda db, bot_profile_id: SimpleNamespace(
+        high_risk_keywords_json=["人工"],
+        sensitive_keywords_json=["诈骗"],
+        telegram_bot_token="bot-token",
+    )
+    service.rules.route = lambda text, bot_profile=None: None
+    service.knowledge.retrieve_faq = lambda db, bot_profile_id, text: faq_result if text == "我想咨询具体功能" else None
+    service.knowledge.retrieve_knowledge_page = lambda db, bot_profile_id, text: pytest.fail("FAQ 命中后不应再查知识页")
+    service.handoff.create_ticket = lambda *args, **kwargs: pytest.fail("FAQ 命中后不应转人工")
+
+    result = service.handle_customer_message(None, conversation, "我想咨询具体功能", {}, None)
+
+    assert result.action == "template_reply"
+    assert result.intent == "faq"
+    assert result.text == faq_result.text
+    assert result.evidence == ["faq:functions"]
 
 
 def test_handle_customer_message_uses_bot_specific_welcome_message() -> None:
@@ -263,7 +299,7 @@ def test_handle_customer_message_uses_knowledge_when_faq_misses() -> None:
     assert result.evidence == ["knowledge_page:downloads"]
 
 
-def test_handle_customer_message_clarifies_when_faq_and_knowledge_miss() -> None:
+def test_handle_customer_message_handoffs_when_faq_and_knowledge_miss() -> None:
     service = ResponseService()
     conversation = SimpleNamespace(
         bot_profile_id=uuid4(),
@@ -272,22 +308,84 @@ def test_handle_customer_message_clarifies_when_faq_and_knowledge_miss() -> None
         telegram_chat_id="123456",
         id=uuid4(),
     )
-
-    service.conversations.record_message = lambda *args, **kwargs: None
-    service.conversations.get_bot_profile = lambda db, bot_profile_id: SimpleNamespace(
+    ticket = SimpleNamespace(id=uuid4())
+    bot_profile = SimpleNamespace(
         high_risk_keywords_json=["人工"],
         sensitive_keywords_json=["诈骗"],
-        telegram_bot_token="bot-token",
+        telegram_bot_token="bot-token-from-conversation",
+        support_group_chat_id="-100200300400",
     )
+    captured: dict[str, str] = {}
+
+    service.conversations.record_message = lambda *args, **kwargs: None
+    service.conversations.get_bot_profile = lambda db, bot_profile_id: bot_profile
+    service.conversations.get_default_bot_profile = lambda db: pytest.fail("未命中转人工不应回退默认 Bot")
     service.rules.route = lambda text, bot_profile=None: None
     service.knowledge.retrieve_faq = lambda db, bot_profile_id, text: None
     service.knowledge.retrieve_knowledge_page = lambda db, bot_profile_id, text: None
+    service.handoff.create_ticket = lambda db, conversation, reason, summary_text: captured.update(
+        {"reason": reason, "summary_text": summary_text}
+    ) or ticket
+    service.handoff.notify_support_group = lambda db, ticket, conversation, bot_token, group_chat_id: captured.update(
+        {"bot_token": bot_token, "group_chat_id": group_chat_id}
+    )
 
     result = service.handle_customer_message(None, conversation, "我想问一下这个情况", {}, None)
 
-    assert result.action == "clarify"
-    assert result.intent == "unclear"
-    assert result.text == "我先确认一下，你是想咨询具体功能/套餐，还是遇到了某个使用问题？"
+    assert result.action == "handoff"
+    assert result.intent == "unanswered"
+    assert result.source_type == "handoff"
+    assert result.text == UNANSWERED_HANDOFF_NOTICE
+    assert result.evidence == [f"handoff:{ticket.id}"]
+    assert captured == {
+        "reason": "unanswered",
+        "summary_text": "我想问一下这个情况",
+        "bot_token": "bot-token-from-conversation",
+        "group_chat_id": "-100200300400",
+    }
+
+
+def test_dispatch_reply_sends_unanswered_handoff_notice_to_customer() -> None:
+    service = ResponseService()
+    conversation = SimpleNamespace(
+        id=uuid4(),
+        tenant_id=uuid4(),
+        bot_profile_id=uuid4(),
+        telegram_chat_id="123456",
+    )
+    sent: dict[str, str] = {}
+
+    class EmptyQuery:
+        def filter(self, *args, **kwargs):
+            return self
+
+        def first(self):
+            return None
+
+    class FakeDb:
+        def query(self, *args, **kwargs):
+            return EmptyQuery()
+
+    service.conversations.get_bot_profile = lambda db, bot_profile_id: SimpleNamespace(telegram_bot_token="bot-token")
+    service.telegram.send_text_sync = lambda bot_token, chat_id, text: sent.update(
+        {"bot_token": bot_token, "chat_id": chat_id, "text": text}
+    ) or 10002
+    service.conversations.record_message = lambda *args, **kwargs: SimpleNamespace()
+    service.audit.record = lambda *args, **kwargs: None
+
+    result = PipelineResult(
+        action="handoff",
+        text=UNANSWERED_HANDOFF_NOTICE,
+        evidence=["handoff:ticket-id"],
+        risk_level="high",
+        intent="unanswered",
+        source_type="handoff",
+    )
+
+    reply = service.dispatch_reply(FakeDb(), conversation, result)
+
+    assert reply == UNANSWERED_HANDOFF_NOTICE
+    assert sent == {"bot_token": "bot-token", "chat_id": "123456", "text": UNANSWERED_HANDOFF_NOTICE}
 
 
 def test_followup_message_reuses_recent_context_before_generic_knowledge_lookup() -> None:

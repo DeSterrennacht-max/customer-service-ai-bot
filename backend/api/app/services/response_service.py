@@ -38,6 +38,7 @@ FOLLOWUP_QUANTITY_PATTERN = re.compile(r"(\d+|[一二两三四五六七八九十
 FOLLOWUP_HINT_WORDS = ("这个", "那个", "这样", "这种", "那种", "继续", "然后", "上面", "刚才")
 PRICE_CONTEXT_WORDS = ("价格", "价钱", "多少钱", "收费", "费用", "套餐", "坐席", "标准版", "高级版")
 PRICING_FACT_QUERIES = ("标准版多少钱", "高级版多少钱", "套餐价格分别是多少", "标准版价格", "高级版价格")
+UNANSWERED_HANDOFF_NOTICE = "已为你转接人工客服，请稍等，客服会尽快回复你。"
 
 
 @dataclass(slots=True)
@@ -141,24 +142,22 @@ class ResponseService:
                 structured=structured,
             )
 
-        clarify_text = "我先确认一下，你是想咨询具体功能/套餐，还是遇到了某个使用问题？"
-        return PipelineResult(
-            action="clarify",
-            text=clarify_text,
-            evidence=[],
-            risk_level="medium",
-            intent="unclear",
-            source_type="system",
+        return self._handoff(
+            db,
+            conversation,
+            text,
+            RuleRouteResult(action="handoff", intent="unanswered", risk_level="medium"),
+            customer_notice=UNANSWERED_HANDOFF_NOTICE,
         )
 
     def dispatch_reply(self, db: Session, conversation: Conversation, pipeline_result: PipelineResult) -> str | None:
-        if pipeline_result.action == "handoff":
+        if pipeline_result.action == "handoff" and not pipeline_result.text:
             return None
 
         style = db.query(StyleProfile).filter(StyleProfile.bot_profile_id == conversation.bot_profile_id).first()
         humanized = pipeline_result.text
         bot_profile = self.conversations.get_bot_profile(db, conversation.bot_profile_id) or self.conversations.get_default_bot_profile(db)
-        if style:
+        if style and pipeline_result.action != "handoff":
             try:
                 if pipeline_result.structured and pipeline_result.source_type == "knowledge_page":
                     humanized = self.generator.preserve_structure(
@@ -210,14 +209,21 @@ class ResponseService:
         )
         return humanized
 
-    def _handoff(self, db: Session, conversation: Conversation, text: str, rule_result: RuleRouteResult | None) -> PipelineResult:
+    def _handoff(
+        self,
+        db: Session,
+        conversation: Conversation,
+        text: str,
+        rule_result: RuleRouteResult | None,
+        customer_notice: str = "",
+    ) -> PipelineResult:
         reason = rule_result.intent if rule_result else "needs_human"
         ticket = self.handoff.create_ticket(db, conversation, reason=reason, summary_text=text)
         bot_profile = self.conversations.get_bot_profile(db, conversation.bot_profile_id) or self.conversations.get_default_bot_profile(db)
         self.handoff.notify_support_group(db, ticket, conversation, bot_profile.telegram_bot_token, bot_profile.support_group_chat_id)
         return PipelineResult(
             action="handoff",
-            text="",
+            text=customer_notice,
             evidence=[f"handoff:{ticket.id}"],
             risk_level="high",
             intent=reason,

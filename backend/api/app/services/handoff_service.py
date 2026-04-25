@@ -87,6 +87,7 @@ class HandoffService:
             "complaint": "客户投诉，需人工介入",
             "refund": "客户提及退款，需人工介入",
             "needs_human": "需人工进一步处理",
+            "unanswered": "知识库未命中，需人工介入",
         }
         return reason_map.get(reason, reason)
 

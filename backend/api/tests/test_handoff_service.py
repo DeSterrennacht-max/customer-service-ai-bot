@@ -93,6 +93,10 @@ def test_customer_label_falls_back_to_display_name_when_username_missing() -> No
     assert service._customer_label(db, conversation) == "张三"
 
 
+def test_reason_label_includes_unanswered_handoff_reason() -> None:
+    assert HandoffService()._reason_label("unanswered") == "知识库未命中，需人工介入"
+
+
 def test_handle_group_reply_accepts_customer_sync_message_reference() -> None:
     service = HandoffService()
     ticket_id = uuid4()
