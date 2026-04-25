@@ -15,6 +15,7 @@ import {
   BotProfile,
   BotProfileCreatePayload,
   BotProfileUpdatePayload,
+  TelegramBotDescriptionResponse,
   StyleProfile,
   StyleProfileUpdatePayload,
   TenantAdminPasswordResetResponse,
@@ -117,6 +118,8 @@ export const api = {
     requestJSON<BotProfile>("/admin/bot-profiles", { method: "POST", body: JSON.stringify(payload) }),
   updateBotProfile: (id: string, payload: BotProfileUpdatePayload) =>
     requestJSON<BotProfile>(`/admin/bot-profiles/${id}`, { method: "PATCH", body: JSON.stringify(payload) }),
+  botProfileTelegramDescription: (id: string) =>
+    requestJSON<TelegramBotDescriptionResponse>(`/admin/bot-profiles/${id}/telegram-description`),
   deleteBotProfile: (id: string) => requestJSON<void>(`/admin/bot-profiles/${id}`, { method: "DELETE" }),
   faqs: (botProfileId?: string | null) => requestJSON<FAQEntry[]>(withQuery("/admin/faqs", { bot_profile_id: botProfileId })),
   createFaq: (payload: FAQCreatePayload) =>

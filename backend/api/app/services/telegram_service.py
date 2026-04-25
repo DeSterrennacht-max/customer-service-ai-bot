@@ -83,6 +83,17 @@ class TelegramService:
         finally:
             await bot.session.close()
 
+    async def get_bot_description(self, bot_token: str) -> str | None:
+        bot = Bot(token=bot_token)
+        try:
+            response = await bot.get_my_description()
+            return response.description or ""
+        except Exception:  # pragma: no cover - network boundary
+            logger.exception("Failed to get Telegram bot description")
+            return None
+        finally:
+            await bot.session.close()
+
     def send_text_sync(
         self,
         bot_token: str,
@@ -104,3 +115,7 @@ class TelegramService:
 
     def set_bot_description_sync(self, bot_token: str, description: str) -> bool:
         return bool(self._run_coroutine_sync(self.set_bot_description(bot_token, description)))
+
+    def get_bot_description_sync(self, bot_token: str) -> str | None:
+        result = self._run_coroutine_sync(self.get_bot_description(bot_token))
+        return result if isinstance(result, str) else None

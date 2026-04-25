@@ -46,3 +46,27 @@ def test_sync_telegram_bot_description_raises_when_telegram_fails(monkeypatch: p
         bot_profiles.sync_telegram_bot_description(SimpleNamespace(telegram_bot_token="bot-token"), "客服 Bot")
 
     assert exc_info.value.status_code == 502
+
+
+def test_fetch_telegram_bot_description_returns_current_value(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(bot_profiles.telegram_service, "get_bot_description_sync", lambda bot_token: "当前说明")
+
+    description = bot_profiles.fetch_telegram_bot_description(SimpleNamespace(telegram_bot_token="bot-token"))
+
+    assert description == "当前说明"
+
+
+def test_fetch_telegram_bot_description_rejects_placeholder_token() -> None:
+    with pytest.raises(HTTPException) as exc_info:
+        bot_profiles.fetch_telegram_bot_description(SimpleNamespace(telegram_bot_token="CHANGE_ME"))
+
+    assert exc_info.value.status_code == 400
+
+
+def test_fetch_telegram_bot_description_raises_when_telegram_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(bot_profiles.telegram_service, "get_bot_description_sync", lambda bot_token: None)
+
+    with pytest.raises(HTTPException) as exc_info:
+        bot_profiles.fetch_telegram_bot_description(SimpleNamespace(telegram_bot_token="bot-token"))
+
+    assert exc_info.value.status_code == 502

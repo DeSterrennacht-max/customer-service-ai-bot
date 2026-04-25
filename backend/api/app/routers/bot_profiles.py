@@ -23,7 +23,7 @@ from backend.api.app.db.models.entities import (
 )
 from backend.api.app.db.session import get_db
 from backend.api.app.dependencies import ensure_tenant_access, get_current_user, is_super_admin
-from backend.api.app.schemas.content import BotProfileCreate, BotProfileResponse, BotProfileUpdate
+from backend.api.app.schemas.content import BotProfileCreate, BotProfileResponse, BotProfileUpdate, TelegramBotDescriptionResponse
 from backend.api.app.services.audit_service import AuditService
 from backend.api.app.services.telegram_business_service import TelegramBusinessConnectionService
 from backend.api.app.services.telegram_service import TelegramService
@@ -78,6 +78,16 @@ def sync_telegram_bot_description(bot_profile: BotProfile, description: str | No
     return True
 
 
+def fetch_telegram_bot_description(bot_profile: BotProfile) -> str:
+    token = (bot_profile.telegram_bot_token or "").strip()
+    if not token or token == "CHANGE_ME":
+        raise HTTPException(status_code=400, detail="Telegram Bot token is missing or still uses the placeholder value.")
+    description = telegram_service.get_bot_description_sync(token)
+    if description is None:
+        raise HTTPException(status_code=502, detail="Telegram bot description fetch failed")
+    return description
+
+
 @router.get("", response_model=list[BotProfileResponse])
 def list_bot_profiles(
     db: Annotated[Session, Depends(get_db)],
@@ -93,6 +103,19 @@ def list_bot_profiles(
 
     rows = db.execute(statement.order_by(BotProfile.created_at.desc())).all()
     return [attach_tenant_name(bot_profile, tenant_name, db) for bot_profile, tenant_name in rows]
+
+
+@router.get("/{bot_profile_id}/telegram-description", response_model=TelegramBotDescriptionResponse)
+def get_bot_profile_telegram_description(
+    bot_profile_id: str,
+    db: Annotated[Session, Depends(get_db)],
+    user: Annotated[object, Depends(get_current_user)],
+) -> TelegramBotDescriptionResponse:
+    bot_profile = db.get(BotProfile, UUID(bot_profile_id))
+    if not bot_profile:
+        raise HTTPException(status_code=404, detail="Bot profile not found")
+    ensure_tenant_access(user, bot_profile.tenant_id)
+    return TelegramBotDescriptionResponse(description=fetch_telegram_bot_description(bot_profile))
 
 
 @router.post("", response_model=BotProfileResponse)

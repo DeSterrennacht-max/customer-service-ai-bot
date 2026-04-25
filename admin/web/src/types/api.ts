@@ -250,3 +250,7 @@ export interface BotProfileUpdatePayload {
   sensitive_keywords_json?: string[];
   is_active?: boolean;
 }
+
+export interface TelegramBotDescriptionResponse {
+  description: string;
+}

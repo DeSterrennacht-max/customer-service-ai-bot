@@ -140,6 +140,10 @@ class BotProfileResponse(BaseResponse, BotProfileBase):
     business_connection_updated_at: datetime | None = None
 
 
+class TelegramBotDescriptionResponse(BaseModel):
+    description: str
+
+
 class TenantResponse(BaseResponse):
     name: str
     admin_login_username: str | None = None

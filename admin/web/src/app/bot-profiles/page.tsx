@@ -135,6 +135,7 @@ export default function BotProfilesPage() {
   const [error, setError] = useState<string | null>(null);
   const [submitMessage, setSubmitMessage] = useState<string | null>(null);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [isDescriptionLoading, setIsDescriptionLoading] = useState(false);
   const [isPending, startTransition] = useTransition();
 
   const isSuperAdmin = me?.role === "super_admin";
@@ -239,6 +240,29 @@ export default function BotProfilesPage() {
     setForm(botToForm(bot));
     setSubmitError(null);
     setSubmitMessage(null);
+  }
+
+  async function loadTelegramDescription() {
+    if (!editingBotId) {
+      setSubmitError("请先编辑已保存的机器人配置，再读取当前 Bot Description。");
+      return;
+    }
+    setSubmitError(null);
+    setSubmitMessage(null);
+    setIsDescriptionLoading(true);
+    try {
+      const data = await api.botProfileTelegramDescription(editingBotId);
+      updateForm("telegram_bot_description", data.description);
+      setSubmitMessage(data.description ? "已读取当前 Telegram Bot Description。" : "当前 Telegram Bot Description 为空。");
+    } catch (loadFailure) {
+      if (loadFailure instanceof AuthError) {
+        router.replace("/login");
+        return;
+      }
+      setSubmitError(loadFailure instanceof Error ? loadFailure.message : "读取 Telegram Bot Description 失败");
+    } finally {
+      setIsDescriptionLoading(false);
+    }
   }
 
   async function reloadBots() {
@@ -424,6 +448,16 @@ export default function BotProfilesPage() {
                 placeholder="填写后保存，会同步到 Telegram；留空不修改"
               />
             </label>
+            <div className="button-row">
+              <button
+                type="button"
+                className="button-secondary"
+                onClick={loadTelegramDescription}
+                disabled={!editingBotId || isPending || isDescriptionLoading}
+              >
+                {isDescriptionLoading ? "读取中..." : "读取当前 Description"}
+              </button>
+            </div>
 
             <div className="grid faq-form-grid">
               <label>
