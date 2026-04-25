@@ -486,53 +486,86 @@ export default function BotProfilesPage() {
         ) : null}
         {isLoading ? <p className="muted">加载中...</p> : null}
         {!isLoading ? (
-          <table>
-            <thead>
-              <tr>
-                <th>名称</th>
-                <th>所属客户</th>
-                <th>用户名</th>
-                <th>客服群</th>
-                <th>Business 接入</th>
-                <th>欢迎语</th>
-                <th>高风险词</th>
-                <th>敏感词</th>
-                <th>状态</th>
-                <th>操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              {bots.map((bot) => (
-                <tr key={bot.id}>
-                  <td>
-                    <strong>{bot.name}</strong>
+          <div className="bot-profile-list">
+            {bots.length === 0 ? <p className="muted">暂无机器人配置。</p> : null}
+            {bots.map((bot) => (
+              <article key={bot.id} className="bot-profile-card">
+                <div className="bot-profile-card-header">
+                  <div>
+                    <div className="bot-profile-title-row">
+                      <h3>{bot.name}</h3>
+                      <span className={`badge${bot.is_active ? "" : " badge-muted"}`}>{bot.is_active ? "active" : "inactive"}</span>
+                    </div>
                     <div className="table-subtext">ID: {bot.id}</div>
-                  </td>
-                  <td>{bot.tenant_name ?? bot.tenant_id}</td>
-                  <td>{bot.telegram_bot_username ? `@${bot.telegram_bot_username.replace(/^@+/, "")}` : "未填写"}</td>
-                  <td>{bot.support_group_chat_id ?? "未填写"}</td>
-                  <td>
-                    <span className={`badge${bot.business_connection_status === "ready" ? "" : " badge-muted"}`}>{businessConnectionLabel(bot)}</span>
-                    {bot.business_connection_id ? <div className="table-subtext">ID: {bot.business_connection_id}</div> : null}
-                  </td>
-                  <td>{bot.welcome_message}</td>
-                  <td>{bot.high_risk_keywords_json.join(" / ") || "未设置"}</td>
-                  <td>{bot.sensitive_keywords_json.join(" / ") || "未设置"}</td>
-                  <td>
-                    <span className={`badge${bot.is_active ? "" : " badge-muted"}`}>{bot.is_active ? "active" : "inactive"}</span>
-                  </td>
-                  <td>
+                  </div>
+                  <div className="bot-profile-actions">
                     <button type="button" className="button-secondary button-inline" onClick={() => startEdit(bot)} disabled={isPending}>
                       编辑
                     </button>
                     <button type="button" className="button-danger button-inline" onClick={() => handleDelete(bot)} disabled={isPending}>
                       删除
                     </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+                  </div>
+                </div>
+
+                <div className="bot-profile-meta-grid">
+                  <div className="bot-profile-meta-item">
+                    <span>所属客户</span>
+                    <strong>{bot.tenant_name ?? bot.tenant_id}</strong>
+                  </div>
+                  <div className="bot-profile-meta-item">
+                    <span>用户名</span>
+                    <strong>{bot.telegram_bot_username ? `@${bot.telegram_bot_username.replace(/^@+/, "")}` : "未填写"}</strong>
+                  </div>
+                  <div className="bot-profile-meta-item">
+                    <span>客服群</span>
+                    <strong>{bot.support_group_chat_id ?? "未填写"}</strong>
+                  </div>
+                  <div className="bot-profile-meta-item">
+                    <span>Business 接入</span>
+                    <strong>
+                      <span className={`badge${bot.business_connection_status === "ready" ? "" : " badge-muted"}`}>
+                        {businessConnectionLabel(bot)}
+                      </span>
+                    </strong>
+                    {bot.business_connection_id ? <div className="table-subtext">ID: {bot.business_connection_id}</div> : null}
+                  </div>
+                </div>
+
+                <div className="bot-profile-section">
+                  <span className="bot-profile-section-label">欢迎语</span>
+                  <p className="bot-profile-message">{bot.welcome_message}</p>
+                </div>
+
+                <div className="bot-profile-keyword-grid">
+                  <div className="bot-profile-section">
+                    <span className="bot-profile-section-label">高风险词</span>
+                    <div className="bot-profile-chip-row">
+                      {bot.high_risk_keywords_json.length
+                        ? bot.high_risk_keywords_json.map((keyword) => (
+                            <span key={keyword} className="keyword-chip keyword-chip-danger">
+                              {keyword}
+                            </span>
+                          ))
+                        : <span className="muted">未设置</span>}
+                    </div>
+                  </div>
+                  <div className="bot-profile-section">
+                    <span className="bot-profile-section-label">敏感词</span>
+                    <div className="bot-profile-chip-row">
+                      {bot.sensitive_keywords_json.length
+                        ? bot.sensitive_keywords_json.map((keyword) => (
+                            <span key={keyword} className="keyword-chip">
+                              {keyword}
+                            </span>
+                          ))
+                        : <span className="muted">未设置</span>}
+                    </div>
+                  </div>
+                </div>
+              </article>
+            ))}
+          </div>
         ) : null}
       </Panel>
     </div>
