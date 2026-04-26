@@ -32,6 +32,13 @@ def validate_image_assets_or_400(assets: object, tenant_id: UUID) -> list[dict[s
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+def ensure_knowledge_page_has_reply_content(body_markdown: object, image_assets: object) -> None:
+    has_text = bool(str(body_markdown or "").strip())
+    has_images = bool(image_assets)
+    if not has_text and not has_images:
+        raise HTTPException(status_code=400, detail="Knowledge page must include body text or at least one image")
+
+
 @router.get("", response_model=list[KnowledgePageResponse])
 def list_knowledge_pages(
     db: Annotated[Session, Depends(get_db)],
@@ -59,7 +66,10 @@ def create_knowledge_page(
     if tenant_id != bot_profile.tenant_id:
         raise HTTPException(status_code=400, detail="Tenant and bot profile mismatch")
     payload_data = payload.model_dump(exclude={"tenant_id"})
+    payload_data["title"] = payload_data["title"].strip()
+    payload_data["body_markdown"] = payload_data["body_markdown"].strip()
     payload_data["image_assets_json"] = validate_image_assets_or_400(payload_data.get("image_assets_json"), tenant_id)
+    ensure_knowledge_page_has_reply_content(payload_data["body_markdown"], payload_data["image_assets_json"])
     page = KnowledgePage(tenant_id=tenant_id, **payload_data)
     db.add(page)
     db.flush()
@@ -91,8 +101,16 @@ def update_knowledge_page(
         raise HTTPException(status_code=404, detail="Knowledge page not found")
     ensure_tenant_access(user, page.tenant_id)
     payload_data = payload.model_dump(exclude_unset=True)
+    if "title" in payload_data and payload_data["title"] is not None:
+        payload_data["title"] = payload_data["title"].strip()
+    if "body_markdown" in payload_data and payload_data["body_markdown"] is not None:
+        payload_data["body_markdown"] = payload_data["body_markdown"].strip()
     if "image_assets_json" in payload_data:
         payload_data["image_assets_json"] = validate_image_assets_or_400(payload_data.get("image_assets_json"), page.tenant_id)
+    next_body = payload_data.get("body_markdown", page.body_markdown)
+    next_assets = payload_data.get("image_assets_json", page.image_assets_json)
+    ensure_knowledge_page_has_reply_content(next_body, next_assets)
+    if "image_assets_json" in payload_data:
         try:
             image_storage_service.delete_removed_image_assets(page.image_assets_json, payload_data["image_assets_json"])
         except (ImageStorageError, ImageValidationError) as exc:

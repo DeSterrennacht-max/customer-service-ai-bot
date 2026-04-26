@@ -291,8 +291,8 @@ export default function KnowledgePagesPage() {
       setSubmitError("标题不能为空。");
       return;
     }
-    if (!form.body_markdown.trim()) {
-      setSubmitError("正文不能为空。");
+    if (!form.body_markdown.trim() && form.image_assets_json.length === 0) {
+      setSubmitError("正文为空时，至少需要上传一张图片。");
       return;
     }
 
@@ -467,7 +467,7 @@ export default function KnowledgePagesPage() {
 
                 <div className="content-text-block">
                   <span className="content-card-eyebrow">正文摘要</span>
-                  <p>{summarizeMarkdown(page.body_markdown) || "暂无摘要"}</p>
+                  <p>{summarizeMarkdown(page.body_markdown) || "暂无文字，仅发送图片"}</p>
                 </div>
 
                 <div className="content-section">

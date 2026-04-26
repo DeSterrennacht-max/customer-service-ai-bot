@@ -277,9 +277,10 @@ class ResponseService:
 
         style = db.query(StyleProfile).filter(StyleProfile.bot_profile_id == conversation.bot_profile_id).first()
         humanized = pipeline_result.text
+        has_text = bool(humanized.strip())
         bot_profile = self.conversations.get_bot_profile(db, conversation.bot_profile_id) or self.conversations.get_default_bot_profile(db)
         business_connection_id = getattr(conversation, "telegram_business_connection_id", None)
-        if style and pipeline_result.action != "handoff" and pipeline_result.source_type != "email_auto_reply":
+        if has_text and style and pipeline_result.action != "handoff" and pipeline_result.source_type != "email_auto_reply":
             try:
                 if pipeline_result.structured and pipeline_result.source_type == "knowledge_page":
                     humanized = self.generator.preserve_structure(
@@ -307,18 +308,21 @@ class ResponseService:
                 delay = random.randint(style.delay_min_ms, style.delay_max_ms) / 1000
                 time.sleep(delay)
 
-        if business_connection_id:
-            telegram_message_id = self.telegram.send_text_sync(
-                bot_profile.telegram_bot_token,
-                conversation.telegram_chat_id,
-                humanized,
-                business_connection_id=business_connection_id,
-            )
-        else:
-            telegram_message_id = self.telegram.send_text_sync(bot_profile.telegram_bot_token, conversation.telegram_chat_id, humanized)
+        has_text = bool(humanized.strip())
+        telegram_message_id = None
+        if has_text:
+            if business_connection_id:
+                telegram_message_id = self.telegram.send_text_sync(
+                    bot_profile.telegram_bot_token,
+                    conversation.telegram_chat_id,
+                    humanized,
+                    business_connection_id=business_connection_id,
+                )
+            else:
+                telegram_message_id = self.telegram.send_text_sync(bot_profile.telegram_bot_token, conversation.telegram_chat_id, humanized)
         photo_message_ids: list[int] = []
         failed_photo_urls: list[str] = []
-        if telegram_message_id and pipeline_result.image_assets:
+        if (telegram_message_id or not has_text) and pipeline_result.image_assets:
             for asset in pipeline_result.image_assets:
                 photo_url = str(asset.get("url") or "").strip()
                 if not photo_url:
@@ -351,7 +355,7 @@ class ResponseService:
             intent=pipeline_result.intent,
             risk_level=RiskLevel(pipeline_result.risk_level),
         )
-        message.delivery_status = DeliveryStatus.SENT if telegram_message_id else DeliveryStatus.FAILED
+        message.delivery_status = DeliveryStatus.SENT if telegram_message_id or photo_message_ids else DeliveryStatus.FAILED
         self.audit.record(
             db=db,
             tenant_id=str(conversation.tenant_id),
@@ -365,7 +369,7 @@ class ResponseService:
                 "risk_level": pipeline_result.risk_level,
                 "source_type": pipeline_result.source_type,
                 "evidence": pipeline_result.evidence,
-                "sent": bool(telegram_message_id),
+                "sent": bool(telegram_message_id or photo_message_ids),
                 "image_count": len(pipeline_result.image_assets),
                 "photo_message_ids": photo_message_ids,
                 "failed_photo_urls": failed_photo_urls,

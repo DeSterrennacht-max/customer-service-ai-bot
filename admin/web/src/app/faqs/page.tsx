@@ -299,8 +299,8 @@ export default function FAQsPage() {
       setSubmitError("至少填写一个问题模式。");
       return;
     }
-    if (!form.canonical_answer.trim()) {
-      setSubmitError("标准答案不能为空。");
+    if (!form.canonical_answer.trim() && form.image_assets_json.length === 0) {
+      setSubmitError("标准答案为空时，至少需要上传一张图片。");
       return;
     }
 
@@ -494,7 +494,7 @@ export default function FAQsPage() {
 
                 <div className="content-text-block">
                   <span className="content-card-eyebrow">标准答案</span>
-                  <p>{faq.canonical_answer}</p>
+                  <p>{faq.canonical_answer || "暂无文字，仅发送图片"}</p>
                 </div>
 
                 <div className="content-section">

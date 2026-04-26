@@ -5,7 +5,7 @@ from uuid import uuid4
 
 import pytest
 
-from backend.api.app.db.models.entities import MessageSource
+from backend.api.app.db.models.entities import DeliveryStatus, MessageSource
 from backend.api.app.services.knowledge_service import RetrievedKnowledge, render_markdown_as_reply, select_knowledge_reply
 from backend.api.app.services.response_service import PipelineResult, ResponseService, UNANSWERED_HANDOFF_NOTICE
 
@@ -876,6 +876,80 @@ def test_dispatch_reply_sends_text_then_object_storage_photos() -> None:
         },
     ]
     assert recorded_payload["photo_message_ids"] == [10005]
+
+
+def test_dispatch_reply_sends_object_storage_photo_without_text() -> None:
+    service = ResponseService()
+    conversation = SimpleNamespace(
+        id=uuid4(),
+        tenant_id=uuid4(),
+        bot_profile_id=uuid4(),
+        telegram_chat_id="123456",
+    )
+    calls: list[dict[str, str]] = []
+    message = SimpleNamespace(delivery_status=None)
+    recorded_payload: dict = {}
+    audit_payload: dict = {}
+
+    class EmptyQuery:
+        def filter(self, *args, **kwargs):
+            return self
+
+        def first(self):
+            return None
+
+    class FakeDb:
+        def query(self, *args, **kwargs):
+            return EmptyQuery()
+
+    service.conversations.get_bot_profile = lambda db, bot_profile_id: SimpleNamespace(telegram_bot_token="bot-token")
+    service.telegram.send_text_sync = lambda *args, **kwargs: pytest.fail("图片-only 回复不应发送空文本")
+
+    def fake_send_photo_sync(bot_token: str, chat_id: str, photo: str, **kwargs):
+        calls.append({"kind": "photo", "bot_token": bot_token, "chat_id": chat_id, "photo": photo, **kwargs})
+        return 10006
+
+    def fake_record_message(*args, **kwargs):
+        recorded_payload.update(kwargs["raw_payload_json"])
+        return message
+
+    service.telegram.send_photo_sync = fake_send_photo_sync
+    service.conversations.record_message = fake_record_message
+    service.audit.record = lambda *args, **kwargs: audit_payload.update(kwargs["detail_json"])
+
+    result = PipelineResult(
+        action="template_reply",
+        text="",
+        evidence=["faq:pricing"],
+        risk_level="low",
+        intent="faq",
+        source_type="faq",
+        image_assets=[
+            {
+                "url": "https://media.example.com/price.png",
+                "object_key": "tenants/test/content-images/faq/price.png",
+                "filename": "price.png",
+                "content_type": "image/png",
+                "size_bytes": 128,
+            }
+        ],
+    )
+
+    reply = service.dispatch_reply(FakeDb(), conversation, result)
+
+    assert reply == ""
+    assert calls == [
+        {
+            "kind": "photo",
+            "bot_token": "bot-token",
+            "chat_id": "123456",
+            "photo": "https://media.example.com/price.png",
+            "business_connection_id": None,
+        }
+    ]
+    assert audit_payload["sent"] is True
+    assert recorded_payload["photo_message_ids"] == [10006]
+    assert message.delivery_status == DeliveryStatus.SENT
 
 
 def test_followup_message_reuses_recent_context_before_generic_knowledge_lookup() -> None:

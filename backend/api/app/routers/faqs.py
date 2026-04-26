@@ -30,6 +30,13 @@ def validate_image_assets_or_400(assets: object, tenant_id: UUID) -> list[dict[s
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+def ensure_faq_has_reply_content(canonical_answer: object, image_assets: object) -> None:
+    has_text = bool(str(canonical_answer or "").strip())
+    has_images = bool(image_assets)
+    if not has_text and not has_images:
+        raise HTTPException(status_code=400, detail="FAQ must include an answer or at least one image")
+
+
 @router.get("", response_model=list[FAQResponse])
 def list_faqs(
     db: Annotated[Session, Depends(get_db)],
@@ -57,7 +64,9 @@ def create_faq(
     if tenant_id != bot_profile.tenant_id:
         raise HTTPException(status_code=400, detail="Tenant and bot profile mismatch")
     payload_data = payload.model_dump(exclude={"tenant_id"})
+    payload_data["canonical_answer"] = payload_data["canonical_answer"].strip()
     payload_data["image_assets_json"] = validate_image_assets_or_400(payload_data.get("image_assets_json"), tenant_id)
+    ensure_faq_has_reply_content(payload_data["canonical_answer"], payload_data["image_assets_json"])
     faq = FAQEntry(tenant_id=tenant_id, **payload_data)
     db.add(faq)
     audit_service.record(
@@ -86,8 +95,14 @@ def update_faq(
         raise HTTPException(status_code=404, detail="FAQ not found")
     ensure_tenant_access(user, faq.tenant_id)
     payload_data = payload.model_dump(exclude_unset=True)
+    if "canonical_answer" in payload_data and payload_data["canonical_answer"] is not None:
+        payload_data["canonical_answer"] = payload_data["canonical_answer"].strip()
     if "image_assets_json" in payload_data:
         payload_data["image_assets_json"] = validate_image_assets_or_400(payload_data.get("image_assets_json"), faq.tenant_id)
+    next_answer = payload_data.get("canonical_answer", faq.canonical_answer)
+    next_assets = payload_data.get("image_assets_json", faq.image_assets_json)
+    ensure_faq_has_reply_content(next_answer, next_assets)
+    if "image_assets_json" in payload_data:
         try:
             image_storage_service.delete_removed_image_assets(faq.image_assets_json, payload_data["image_assets_json"])
         except (ImageStorageError, ImageValidationError) as exc:
