@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from backend.api.app.core.defaults import DEFAULT_BOT_WELCOME_MESSAGE, DEFAULT_UNANSWERED_FALLBACK_MESSAGE
+from backend.api.app.core.defaults import DEFAULT_BOT_WELCOME_MESSAGE, DEFAULT_EMAIL_AUTO_REPLY_MESSAGE, DEFAULT_UNANSWERED_FALLBACK_MESSAGE
 from backend.api.app.db.models.entities import BotProfile, Conversation, ConversationStatus, DeliveryStatus, Message, MessageChannel, MessageSource, RiskLevel, StyleProfile
 from backend.api.app.llm.generator_client import GeneratorLLMClient
 from backend.api.app.services.audit_service import AuditService
@@ -91,6 +91,15 @@ class ResponseService:
                 intent=rule_result.intent,
                 source_type="system",
             )
+        if rule_result and rule_result.action == "email_auto_reply":
+            return PipelineResult(
+                action="template_reply",
+                text=self._email_auto_reply_message(bot_profile),
+                evidence=["system:email_auto_reply"],
+                risk_level=rule_result.risk_level,
+                intent=rule_result.intent,
+                source_type="email_auto_reply",
+            )
 
         followup_first = self._looks_like_followup(text)
         if followup_first:
@@ -169,6 +178,25 @@ class ResponseService:
         telegram_message_id: str | None,
     ) -> tuple[Conversation | None, PipelineResult]:
         rule_result = self.rules.route(text, bot_profile=bot_profile)
+        if rule_result and rule_result.action == "email_auto_reply":
+            return self._record_business_reply_candidate(
+                db=db,
+                bot_profile=bot_profile,
+                conversation=conversation,
+                telegram_chat_id=telegram_chat_id,
+                telegram_user_id=telegram_user_id,
+                display_name=display_name,
+                business_connection_id=business_connection_id,
+                text=text,
+                raw_payload=raw_payload,
+                telegram_message_id=telegram_message_id,
+                answer_result=RetrievedKnowledge(
+                    text=self._email_auto_reply_message(bot_profile),
+                    evidence=["system:email_auto_reply"],
+                    source_type="email_auto_reply",
+                    structured=False,
+                ),
+            )
         if rule_result:
             return None, self._ignored_business_result(rule_result.intent, rule_result.risk_level)
 
@@ -251,7 +279,7 @@ class ResponseService:
         humanized = pipeline_result.text
         bot_profile = self.conversations.get_bot_profile(db, conversation.bot_profile_id) or self.conversations.get_default_bot_profile(db)
         business_connection_id = getattr(conversation, "telegram_business_connection_id", None)
-        if style and pipeline_result.action != "handoff":
+        if style and pipeline_result.action != "handoff" and pipeline_result.source_type != "email_auto_reply":
             try:
                 if pipeline_result.structured and pipeline_result.source_type == "knowledge_page":
                     humanized = self.generator.preserve_structure(
@@ -419,12 +447,14 @@ class ResponseService:
             raw_payload_json=raw_payload,
             telegram_message_id=telegram_message_id,
         )
+        is_knowledge_reply = answer_result.source_type == "knowledge_page"
+        is_email_reply = answer_result.source_type == "email_auto_reply"
         return conversation, PipelineResult(
-            action="knowledge_reply" if answer_result.source_type == "knowledge_page" else "template_reply",
+            action="knowledge_reply" if is_knowledge_reply else "template_reply",
             text=answer_result.text,
             evidence=answer_result.evidence,
             risk_level="low",
-            intent="knowledge" if answer_result.source_type == "knowledge_page" else "faq",
+            intent="email_capture" if is_email_reply else "knowledge" if is_knowledge_reply else "faq",
             source_type=answer_result.source_type,
             structured=answer_result.structured,
             image_assets=answer_result.image_assets,
@@ -445,6 +475,11 @@ class ResponseService:
     def _unanswered_fallback_message(bot_profile: object) -> str:
         configured = str(getattr(bot_profile, "unanswered_fallback_message", "") or "").strip()
         return configured or DEFAULT_UNANSWERED_FALLBACK_MESSAGE
+
+    @staticmethod
+    def _email_auto_reply_message(bot_profile: object) -> str:
+        configured = str(getattr(bot_profile, "email_auto_reply_message", "") or "").strip()
+        return configured or DEFAULT_EMAIL_AUTO_REPLY_MESSAGE
 
     def _build_followup_answer(self, db: Session, conversation: Conversation, text: str) -> tuple[str, list[str], str, bool]:
         result = self._build_followup_result(db, conversation, text)

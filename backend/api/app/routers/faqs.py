@@ -12,11 +12,11 @@ from backend.api.app.db.session import get_db
 from backend.api.app.dependencies import ensure_tenant_access, get_accessible_bot_profile, get_current_user, is_super_admin
 from backend.api.app.schemas.content import FAQCreate, FAQResponse, FAQUpdate
 from backend.api.app.services.audit_service import AuditService
-from backend.api.app.services.image_storage_service import ImageStorageError, ImageValidationError, R2ImageStorageService
+from backend.api.app.services.image_storage_service import ImageStorageError, ImageValidationError, ObjectImageStorageService
 
 router = APIRouter(prefix="/admin/faqs", tags=["faqs"])
 audit_service = AuditService()
-image_storage_service = R2ImageStorageService()
+image_storage_service = ObjectImageStorageService()
 
 
 def raise_image_delete_error(exc: Exception) -> None:

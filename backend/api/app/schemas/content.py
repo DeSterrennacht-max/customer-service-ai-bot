@@ -5,7 +5,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
-from backend.api.app.core.defaults import DEFAULT_BOT_WELCOME_MESSAGE, DEFAULT_UNANSWERED_FALLBACK_MESSAGE
+from backend.api.app.core.defaults import DEFAULT_BOT_WELCOME_MESSAGE, DEFAULT_EMAIL_AUTO_REPLY_MESSAGE, DEFAULT_UNANSWERED_FALLBACK_MESSAGE
 from backend.api.app.db.models.entities import RiskLevel
 from backend.api.app.schemas.common import BaseResponse
 
@@ -118,6 +118,8 @@ class BotProfileBase(BaseModel):
     support_group_chat_id: str | None = None
     welcome_message: str = DEFAULT_BOT_WELCOME_MESSAGE
     unanswered_fallback_message: str = DEFAULT_UNANSWERED_FALLBACK_MESSAGE
+    email_auto_reply_enabled: bool = True
+    email_auto_reply_message: str = DEFAULT_EMAIL_AUTO_REPLY_MESSAGE
     language: str = "zh"
     industry: str | None = None
     faq_hint_keywords_json: list[str] = Field(default_factory=list)
@@ -139,6 +141,8 @@ class BotProfileUpdate(BaseModel):
     support_group_chat_id: str | None = None
     welcome_message: str | None = None
     unanswered_fallback_message: str | None = None
+    email_auto_reply_enabled: bool | None = None
+    email_auto_reply_message: str | None = None
     language: str | None = None
     industry: str | None = None
     faq_hint_keywords_json: list[str] | None = None

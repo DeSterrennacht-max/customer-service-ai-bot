@@ -9,7 +9,7 @@ from sqlalchemy import Enum as SqlEnum
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from backend.api.app.core.defaults import DEFAULT_BOT_WELCOME_MESSAGE, DEFAULT_UNANSWERED_FALLBACK_MESSAGE
+from backend.api.app.core.defaults import DEFAULT_BOT_WELCOME_MESSAGE, DEFAULT_EMAIL_AUTO_REPLY_MESSAGE, DEFAULT_UNANSWERED_FALLBACK_MESSAGE
 from backend.api.app.db.base import Base
 
 
@@ -92,6 +92,8 @@ class BotProfile(Base):
     support_group_chat_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     welcome_message: Mapped[str] = mapped_column(Text, default=DEFAULT_BOT_WELCOME_MESSAGE)
     unanswered_fallback_message: Mapped[str] = mapped_column(Text, default=DEFAULT_UNANSWERED_FALLBACK_MESSAGE)
+    email_auto_reply_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    email_auto_reply_message: Mapped[str] = mapped_column(Text, default=DEFAULT_EMAIL_AUTO_REPLY_MESSAGE)
     language: Mapped[str] = mapped_column(String(32), default="zh")
     industry: Mapped[str | None] = mapped_column(String(128), nullable=True)
     faq_hint_keywords_json: Mapped[list[str]] = mapped_column(JSONB, default=list, nullable=False)

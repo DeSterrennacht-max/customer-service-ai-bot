@@ -17,6 +17,8 @@ interface BotProfileFormState {
   support_group_chat_id: string;
   welcome_message: string;
   unanswered_fallback_message: string;
+  email_auto_reply_enabled: boolean;
+  email_auto_reply_message: string;
   telegram_bot_description: string;
   language: string;
   industry: string;
@@ -28,6 +30,7 @@ interface BotProfileFormState {
 const DEFAULT_WELCOME_MESSAGE =
   "你好，我是客服助手。你可以直接告诉我你想了解价格、套餐、功能，或者把你遇到的问题发给我，我会先帮你处理；如果你需要人工、投诉或退款，也可以直接说。";
 const DEFAULT_UNANSWERED_FALLBACK_MESSAGE = "稍等，这会儿有点忙，我马上处理";
+const DEFAULT_EMAIL_AUTO_REPLY_MESSAGE = "已收到你的邮箱，我们会根据你提供的信息继续处理。";
 
 const DEFAULT_FORM: BotProfileFormState = {
   tenant_id: "",
@@ -37,6 +40,8 @@ const DEFAULT_FORM: BotProfileFormState = {
   support_group_chat_id: "",
   welcome_message: DEFAULT_WELCOME_MESSAGE,
   unanswered_fallback_message: DEFAULT_UNANSWERED_FALLBACK_MESSAGE,
+  email_auto_reply_enabled: true,
+  email_auto_reply_message: DEFAULT_EMAIL_AUTO_REPLY_MESSAGE,
   telegram_bot_description: "",
   language: "zh",
   industry: "",
@@ -61,6 +66,10 @@ const BOT_GUIDE = [
   {
     title: "兜底回复",
     description: "只有普通 Bot 私聊未命中 FAQ 和知识库时，才会发送这条回复并转人工。Business 私聊未命中不会发送。"
+  },
+  {
+    title: "邮箱自动回复",
+    description: "用户整条消息是邮箱地址时，会直接回复这里配置的内容，适合开户、注册、资料收集等场景。"
   },
   {
     title: "Bot Description",
@@ -100,6 +109,8 @@ function botToForm(bot: BotProfile): BotProfileFormState {
     support_group_chat_id: bot.support_group_chat_id ?? "",
     welcome_message: bot.welcome_message,
     unanswered_fallback_message: bot.unanswered_fallback_message || DEFAULT_UNANSWERED_FALLBACK_MESSAGE,
+    email_auto_reply_enabled: bot.email_auto_reply_enabled,
+    email_auto_reply_message: bot.email_auto_reply_message || DEFAULT_EMAIL_AUTO_REPLY_MESSAGE,
     telegram_bot_description: "",
     language: bot.language,
     industry: bot.industry ?? "",
@@ -324,6 +335,8 @@ export default function BotProfilesPage() {
           support_group_chat_id: form.support_group_chat_id.trim() || null,
           welcome_message: form.welcome_message.trim() || DEFAULT_WELCOME_MESSAGE,
           unanswered_fallback_message: form.unanswered_fallback_message.trim() || DEFAULT_UNANSWERED_FALLBACK_MESSAGE,
+          email_auto_reply_enabled: form.email_auto_reply_enabled,
+          email_auto_reply_message: form.email_auto_reply_message.trim() || DEFAULT_EMAIL_AUTO_REPLY_MESSAGE,
           language: form.language.trim() || "zh",
           industry: form.industry.trim() || null,
           high_risk_keywords_json: splitText(form.high_risk_keywords_text),
@@ -436,6 +449,28 @@ export default function BotProfilesPage() {
                 value={form.unanswered_fallback_message}
                 onChange={(event) => updateForm("unanswered_fallback_message", event.target.value)}
                 placeholder={DEFAULT_UNANSWERED_FALLBACK_MESSAGE}
+              />
+            </label>
+
+            <div className="card">
+              <label className="checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={form.email_auto_reply_enabled}
+                  onChange={(event) => updateForm("email_auto_reply_enabled", event.target.checked)}
+                />
+                <span>启用邮箱格式自动回复</span>
+              </label>
+              <p>当用户只发送一个邮箱地址时，机器人会直接回复下面这段内容；如果消息里还有其他文字，则继续走 FAQ/知识页流程。</p>
+            </div>
+
+            <label>
+              邮箱自动回复内容
+              <textarea
+                rows={3}
+                value={form.email_auto_reply_message}
+                onChange={(event) => updateForm("email_auto_reply_message", event.target.value)}
+                placeholder={DEFAULT_EMAIL_AUTO_REPLY_MESSAGE}
               />
             </label>
 
@@ -615,6 +650,13 @@ export default function BotProfilesPage() {
                 <div className="bot-profile-section">
                   <span className="bot-profile-section-label">兜底回复</span>
                   <p className="bot-profile-message">{bot.unanswered_fallback_message}</p>
+                </div>
+
+                <div className="bot-profile-section">
+                  <span className="bot-profile-section-label">邮箱自动回复</span>
+                  <p className="bot-profile-message">
+                    {bot.email_auto_reply_enabled ? bot.email_auto_reply_message : "已关闭"}
+                  </p>
                 </div>
 
                 <div className="bot-profile-keyword-grid">

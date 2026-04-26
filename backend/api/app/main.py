@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from backend.api.app.core.account_utils import slugify_login_username
 from backend.api.app.core.config import get_settings
-from backend.api.app.core.defaults import DEFAULT_BOT_WELCOME_MESSAGE, DEFAULT_UNANSWERED_FALLBACK_MESSAGE
+from backend.api.app.core.defaults import DEFAULT_BOT_WELCOME_MESSAGE, DEFAULT_EMAIL_AUTO_REPLY_MESSAGE, DEFAULT_UNANSWERED_FALLBACK_MESSAGE
 from backend.api.app.core.logging import configure_logging
 from backend.api.app.core.security import get_password_hash
 from backend.api.app.db.base import Base
@@ -69,6 +69,8 @@ def bootstrap_defaults() -> None:
                 support_group_chat_id=settings.default_support_group_chat_id,
                 welcome_message=DEFAULT_BOT_WELCOME_MESSAGE,
                 unanswered_fallback_message=DEFAULT_UNANSWERED_FALLBACK_MESSAGE,
+                email_auto_reply_enabled=True,
+                email_auto_reply_message=DEFAULT_EMAIL_AUTO_REPLY_MESSAGE,
                 language="zh",
                 industry="saas",
                 faq_hint_keywords_json=["价格", "套餐", "试用", "功能", "支持"],
@@ -96,6 +98,9 @@ def bootstrap_defaults() -> None:
                 changed = True
             if not bot.unanswered_fallback_message:
                 bot.unanswered_fallback_message = DEFAULT_UNANSWERED_FALLBACK_MESSAGE
+                changed = True
+            if not bot.email_auto_reply_message:
+                bot.email_auto_reply_message = DEFAULT_EMAIL_AUTO_REPLY_MESSAGE
                 changed = True
             if changed:
                 db.add(bot)

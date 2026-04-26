@@ -9,10 +9,10 @@ from sqlalchemy.orm import Session
 from backend.api.app.db.session import get_db
 from backend.api.app.dependencies import ensure_tenant_access, get_accessible_bot_profile, get_current_user
 from backend.api.app.schemas.content import ImageAsset, ImageDeleteRequest
-from backend.api.app.services.image_storage_service import ImageStorageError, ImageValidationError, R2ImageStorageService
+from backend.api.app.services.image_storage_service import ImageStorageError, ImageValidationError, ObjectImageStorageService
 
 router = APIRouter(prefix="/admin/media", tags=["media"])
-image_storage_service = R2ImageStorageService()
+image_storage_service = ObjectImageStorageService()
 
 
 def storage_error_to_http(exc: Exception) -> HTTPException:

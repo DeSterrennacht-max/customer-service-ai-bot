@@ -239,6 +239,67 @@ def test_handle_customer_message_uses_bot_specific_welcome_message() -> None:
     assert result.evidence == ["system:welcome"]
 
 
+def test_handle_customer_message_uses_bot_email_auto_reply_before_faq() -> None:
+    service = ResponseService()
+    conversation = SimpleNamespace(
+        bot_profile_id=uuid4(),
+        status="open",
+        tenant_id=uuid4(),
+        telegram_chat_id="123456",
+        id=uuid4(),
+    )
+
+    service.conversations.record_message = lambda *args, **kwargs: None
+    service.conversations.get_bot_profile = lambda db, bot_profile_id: SimpleNamespace(
+        high_risk_keywords_json=["人工"],
+        sensitive_keywords_json=["诈骗"],
+        email_auto_reply_enabled=True,
+        email_auto_reply_message="收到邮箱了，请继续等候开户通知。",
+        telegram_bot_token="bot-token",
+    )
+    service.knowledge.retrieve_faq = lambda *args, **kwargs: pytest.fail("邮箱自动回复不应查 FAQ")
+    service.knowledge.retrieve_knowledge_page = lambda *args, **kwargs: pytest.fail("邮箱自动回复不应查知识页")
+
+    result = service.handle_customer_message(None, conversation, "customer@example.com", {}, None)
+
+    assert result.action == "template_reply"
+    assert result.intent == "email_capture"
+    assert result.text == "收到邮箱了，请继续等候开户通知。"
+    assert result.evidence == ["system:email_auto_reply"]
+    assert result.source_type == "email_auto_reply"
+
+
+def test_handle_customer_message_ignores_email_auto_reply_when_disabled() -> None:
+    service = ResponseService()
+    conversation = SimpleNamespace(
+        bot_profile_id=uuid4(),
+        status="open",
+        tenant_id=uuid4(),
+        telegram_chat_id="123456",
+        id=uuid4(),
+    )
+    ticket = SimpleNamespace(id=uuid4())
+
+    service.conversations.record_message = lambda *args, **kwargs: None
+    service.conversations.get_bot_profile = lambda db, bot_profile_id: SimpleNamespace(
+        high_risk_keywords_json=["人工"],
+        sensitive_keywords_json=["诈骗"],
+        email_auto_reply_enabled=False,
+        email_auto_reply_message="收到邮箱了。",
+        telegram_bot_token="bot-token",
+        support_group_chat_id="-100200300400",
+    )
+    service.knowledge.retrieve_faq = lambda db, bot_profile_id, text: None
+    service.knowledge.retrieve_knowledge_page = lambda db, bot_profile_id, text: None
+    service.handoff.create_ticket = lambda *args, **kwargs: ticket
+    service.handoff.notify_support_group = lambda *args, **kwargs: None
+
+    result = service.handle_customer_message(None, conversation, "customer@example.com", {}, None)
+
+    assert result.action == "handoff"
+    assert result.intent == "unanswered"
+
+
 def test_dispatch_reply_falls_back_to_original_text_when_generator_fails() -> None:
     service = ResponseService()
     conversation = SimpleNamespace(
@@ -290,6 +351,67 @@ def test_dispatch_reply_falls_back_to_original_text_when_generator_fails() -> No
 
     assert reply == "你好，我是客服柠檬。"
     assert sent == {"bot_token": "bot-token", "chat_id": "123456", "text": "你好，我是客服柠檬。"}
+
+
+def test_dispatch_reply_sends_email_auto_reply_without_humanizing() -> None:
+    service = ResponseService()
+    conversation = SimpleNamespace(
+        id=uuid4(),
+        tenant_id=uuid4(),
+        bot_profile_id=uuid4(),
+        telegram_chat_id="123456",
+    )
+    style = SimpleNamespace(
+        tone="friendly",
+        banned_phrases_json=[],
+        typing_enabled=True,
+    )
+    sent: dict[str, str] = {}
+
+    class FakeQuery:
+        def filter(self, *args, **kwargs):
+            return self
+
+        def first(self):
+            return style
+
+    class FakeDb:
+        def query(self, *args, **kwargs):
+            return FakeQuery()
+
+    class FailingGenerator:
+        def humanize(self, *args, **kwargs):
+            raise AssertionError("邮箱自动回复不应被风格改写")
+
+        def preserve_structure(self, *args, **kwargs):
+            raise AssertionError("邮箱自动回复不应被风格改写")
+
+    service.generator = FailingGenerator()
+    service.conversations.get_bot_profile = lambda db, bot_profile_id: SimpleNamespace(telegram_bot_token="bot-token")
+    service.telegram.send_chat_action_sync = lambda *args, **kwargs: pytest.fail("邮箱自动回复不应模拟输入")
+    service.telegram.send_text_sync = lambda bot_token, chat_id, text: sent.update(
+        {"bot_token": bot_token, "chat_id": chat_id, "text": text}
+    ) or 10001
+    service.conversations.record_message = lambda *args, **kwargs: SimpleNamespace()
+    service.audit.record = lambda *args, **kwargs: None
+
+    result = PipelineResult(
+        action="template_reply",
+        text="已收到你的邮箱，我们会根据你提供的信息继续处理。",
+        evidence=["system:email_auto_reply"],
+        risk_level="low",
+        intent="email_capture",
+        source_type="email_auto_reply",
+    )
+
+    reply = service.dispatch_reply(FakeDb(), conversation, result)
+
+    assert reply == "已收到你的邮箱，我们会根据你提供的信息继续处理。"
+    assert sent == {
+        "bot_token": "bot-token",
+        "chat_id": "123456",
+        "text": "已收到你的邮箱，我们会根据你提供的信息继续处理。",
+    }
 
 
 def test_handle_customer_message_uses_knowledge_when_faq_misses() -> None:
@@ -460,6 +582,54 @@ def test_handle_business_customer_message_records_and_replies_on_faq_hit() -> No
     assert captured["telegram_message_id"] == "201"
 
 
+def test_handle_business_customer_message_records_and_replies_on_email_hit() -> None:
+    service = ResponseService()
+    bot_profile = SimpleNamespace(
+        id=uuid4(),
+        tenant_id=uuid4(),
+        high_risk_keywords_json=["人工"],
+        sensitive_keywords_json=["诈骗"],
+        email_auto_reply_enabled=True,
+        email_auto_reply_message="已收到邮箱。",
+    )
+    conversation = SimpleNamespace(
+        id=uuid4(),
+        tenant_id=bot_profile.tenant_id,
+        bot_profile_id=bot_profile.id,
+        status="open",
+        telegram_chat_id="6059820900",
+        telegram_business_connection_id="business-connection-1",
+    )
+    captured: dict = {}
+    created: dict = {}
+
+    service.knowledge.retrieve_faq = lambda *args, **kwargs: pytest.fail("邮箱自动回复不应查 FAQ")
+    service.knowledge.retrieve_knowledge_page = lambda *args, **kwargs: pytest.fail("邮箱自动回复不应查知识页")
+    service.conversations.get_or_create_conversation = lambda **kwargs: created.update(kwargs) or conversation
+    service.conversations.record_message = lambda *args, **kwargs: captured.update(kwargs)
+
+    resolved_conversation, result = service.handle_business_customer_message(
+        db=object(),
+        bot_profile=bot_profile,
+        conversation=None,
+        telegram_chat_id="6059820900",
+        telegram_user_id="6059820900",
+        display_name="customer",
+        business_connection_id="business-connection-1",
+        text="customer@example.com",
+        raw_payload={"business_message": {"message_id": 211}},
+        telegram_message_id="211",
+    )
+
+    assert resolved_conversation is conversation
+    assert created["telegram_business_connection_id"] == "business-connection-1"
+    assert result.action == "template_reply"
+    assert result.intent == "email_capture"
+    assert result.text == "已收到邮箱。"
+    assert result.source_type == "email_auto_reply"
+    assert captured["content_text"] == "customer@example.com"
+
+
 def test_handle_business_customer_message_ignores_miss_without_recording_or_handoff() -> None:
     service = ResponseService()
     bot_profile = SimpleNamespace(
@@ -627,7 +797,7 @@ def test_dispatch_reply_sends_business_message_with_connection_id() -> None:
     }
 
 
-def test_dispatch_reply_sends_text_then_r2_photos() -> None:
+def test_dispatch_reply_sends_text_then_object_storage_photos() -> None:
     service = ResponseService()
     conversation = SimpleNamespace(
         id=uuid4(),

@@ -36,7 +36,7 @@ export function ImageAssetManager({ assets, disabled, onUpload, onRemove }: Imag
       <div className="image-manager-header">
         <div>
           <strong>图片回复</strong>
-          <p>支持 jpg、png、webp，单张最大 5MB。图片会上传到 Cloudflare R2，并用于网页展示和 Telegram 自动回复。</p>
+          <p>支持 jpg、png、webp，单张最大 5MB。图片会上传到 Backblaze B2 / S3-compatible 存储，并用于网页展示和 Telegram 自动回复。</p>
         </div>
         <label className="image-upload-button">
           上传图片

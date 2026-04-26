@@ -243,7 +243,7 @@ export default function FAQsPage() {
     }));
 
     if (isPersistedImage(asset)) {
-      setSubmitMessage("图片已从表单移除，保存 FAQ 后会同步删除 R2 原图。");
+      setSubmitMessage("图片已从表单移除，保存 FAQ 后会同步删除对象存储原图。");
       return;
     }
 

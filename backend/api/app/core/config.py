@@ -36,6 +36,12 @@ class Settings(BaseSettings):
     generator_model: str = "gpt-4.1-mini"
     webhook_secret: str | None = Field(default=None)
     public_base_url: str | None = None
+    object_storage_endpoint_url: str | None = None
+    object_storage_access_key_id: str | None = None
+    object_storage_secret_access_key: str | None = None
+    object_storage_bucket: str | None = None
+    object_storage_public_base_url: str | None = None
+    object_storage_max_image_bytes: int = 5 * 1024 * 1024
     r2_endpoint_url: str | None = None
     r2_access_key_id: str | None = None
     r2_secret_access_key: str | None = None

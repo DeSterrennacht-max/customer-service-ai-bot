@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 
 from backend.api.app.db.models.entities import BotProfile
@@ -8,6 +9,7 @@ from backend.api.app.db.models.entities import BotProfile
 DEFAULT_HIGH_RISK_KEYWORDS = {"人工", "投诉", "退款", "退费", "律师", "举报"}
 DEFAULT_SENSITIVE_KEYWORDS = {"骂", "骗", "垃圾", "诈骗"}
 START_COMMANDS = {"/start"}
+EMAIL_PATTERN = re.compile(r"^[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}$", re.IGNORECASE)
 
 
 @dataclass(slots=True)
@@ -37,6 +39,15 @@ class RuleRouter:
         if matched_risk:
             return RuleRouteResult(action="handoff", intent="human_request", risk_level="high", matched_keywords=matched_risk)
 
+        normalized_message = message.strip()
+        if self._email_auto_reply_enabled(bot_profile) and EMAIL_PATTERN.fullmatch(normalized_message):
+            return RuleRouteResult(
+                action="email_auto_reply",
+                intent="email_capture",
+                risk_level="low",
+                entities={"email": normalized_message},
+            )
+
         return None
 
     @staticmethod
@@ -44,3 +55,9 @@ class RuleRouter:
         source = values if values else list(defaults)
         normalized = {item.strip() for item in source if item and item.strip()}
         return normalized or set(defaults)
+
+    @staticmethod
+    def _email_auto_reply_enabled(bot_profile: BotProfile | None) -> bool:
+        if bot_profile is None:
+            return False
+        return bool(getattr(bot_profile, "email_auto_reply_enabled", False))

@@ -54,7 +54,7 @@ def normalize_image_assets(value: object) -> list[dict[str, object]]:
     return assets
 
 
-class R2ImageStorageService:
+class ObjectImageStorageService:
     def __init__(self, settings: Settings | None = None, client: Any | None = None) -> None:
         self.settings = settings or get_settings()
         self._client = client
@@ -65,9 +65,9 @@ class R2ImageStorageService:
         if self._client is None:
             self._client = boto3.client(
                 "s3",
-                endpoint_url=self.settings.r2_endpoint_url,
-                aws_access_key_id=self.settings.r2_access_key_id,
-                aws_secret_access_key=self.settings.r2_secret_access_key,
+                endpoint_url=self._config_value("object_storage_endpoint_url", "r2_endpoint_url"),
+                aws_access_key_id=self._config_value("object_storage_access_key_id", "r2_access_key_id"),
+                aws_secret_access_key=self._config_value("object_storage_secret_access_key", "r2_secret_access_key"),
                 region_name="auto",
             )
         return self._client
@@ -90,7 +90,7 @@ class R2ImageStorageService:
 
         try:
             self.client.put_object(
-                Bucket=self.settings.r2_bucket,
+                Bucket=self._config_value("object_storage_bucket", "r2_bucket"),
                 Key=object_key,
                 Body=data,
                 ContentType=content_type,
@@ -113,7 +113,7 @@ class R2ImageStorageService:
         if not object_key:
             raise ImageValidationError("Image object key is required")
         try:
-            self.client.delete_object(Bucket=self.settings.r2_bucket, Key=object_key)
+            self.client.delete_object(Bucket=self._config_value("object_storage_bucket", "r2_bucket"), Key=object_key)
         except (BotoCoreError, ClientError) as exc:
             raise ImageStorageError("Image delete failed") from exc
 
@@ -136,7 +136,7 @@ class R2ImageStorageService:
         return normalized_assets
 
     def public_url(self, object_key: str) -> str:
-        public_base_url = str(self.settings.r2_public_base_url or "").rstrip("/")
+        public_base_url = str(self._config_value("object_storage_public_base_url", "r2_public_base_url")).rstrip("/")
         return f"{public_base_url}/{quote(object_key, safe='/')}"
 
     @staticmethod
@@ -153,16 +153,16 @@ class R2ImageStorageService:
         missing = [
             name
             for name, value in {
-                "APP_R2_ENDPOINT_URL": self.settings.r2_endpoint_url,
-                "APP_R2_ACCESS_KEY_ID": self.settings.r2_access_key_id,
-                "APP_R2_SECRET_ACCESS_KEY": self.settings.r2_secret_access_key,
-                "APP_R2_BUCKET": self.settings.r2_bucket,
-                "APP_R2_PUBLIC_BASE_URL": self.settings.r2_public_base_url,
+                "APP_OBJECT_STORAGE_ENDPOINT_URL": self._config_value("object_storage_endpoint_url", "r2_endpoint_url"),
+                "APP_OBJECT_STORAGE_ACCESS_KEY_ID": self._config_value("object_storage_access_key_id", "r2_access_key_id"),
+                "APP_OBJECT_STORAGE_SECRET_ACCESS_KEY": self._config_value("object_storage_secret_access_key", "r2_secret_access_key"),
+                "APP_OBJECT_STORAGE_BUCKET": self._config_value("object_storage_bucket", "r2_bucket"),
+                "APP_OBJECT_STORAGE_PUBLIC_BASE_URL": self._config_value("object_storage_public_base_url", "r2_public_base_url"),
             }.items()
             if not value
         ]
         if missing:
-            raise ImageStorageError(f"R2 image storage is not configured: {', '.join(missing)}")
+            raise ImageStorageError(f"Object image storage is not configured: {', '.join(missing)}")
 
     @staticmethod
     def _validate_resource_type(resource_type: str) -> str:
@@ -173,7 +173,7 @@ class R2ImageStorageService:
     def _validate_image(self, filename: str | None, content_type: str | None, data: bytes) -> str:
         if not data:
             raise ImageValidationError("Image file is empty")
-        if len(data) > self.settings.r2_max_image_bytes:
+        if len(data) > self._max_image_bytes():
             raise ImageValidationError("Image file is too large")
 
         normalized_type = (content_type or "").split(";", 1)[0].strip().lower()
@@ -191,3 +191,9 @@ class R2ImageStorageService:
         basename = PurePath(filename or "image").name
         basename = re.sub(r"[\r\n\t]+", " ", basename).strip()
         return basename[:180] or "image"
+
+    def _config_value(self, preferred_name: str, fallback_name: str) -> object:
+        return getattr(self.settings, preferred_name, None) or getattr(self.settings, fallback_name, None)
+
+    def _max_image_bytes(self) -> int:
+        return int(self._config_value("object_storage_max_image_bytes", "r2_max_image_bytes") or 5 * 1024 * 1024)

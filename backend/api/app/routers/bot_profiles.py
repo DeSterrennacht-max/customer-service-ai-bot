@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from backend.api.app.core.defaults import DEFAULT_BOT_WELCOME_MESSAGE, DEFAULT_UNANSWERED_FALLBACK_MESSAGE
+from backend.api.app.core.defaults import DEFAULT_BOT_WELCOME_MESSAGE, DEFAULT_EMAIL_AUTO_REPLY_MESSAGE, DEFAULT_UNANSWERED_FALLBACK_MESSAGE
 from backend.api.app.db.models.entities import (
     BotProfile,
     Conversation,
@@ -67,6 +67,11 @@ def unregister_telegram_webhook(bot_profile: BotProfile) -> str | None:
 def normalize_unanswered_fallback_message(value: str | None) -> str:
     normalized = (value or "").strip()
     return normalized or DEFAULT_UNANSWERED_FALLBACK_MESSAGE
+
+
+def normalize_email_auto_reply_message(value: str | None) -> str:
+    normalized = (value or "").strip()
+    return normalized or DEFAULT_EMAIL_AUTO_REPLY_MESSAGE
 
 
 def sync_telegram_bot_description(bot_profile: BotProfile, description: str | None) -> bool:
@@ -134,6 +139,9 @@ def create_bot_profile(
     create_values["unanswered_fallback_message"] = normalize_unanswered_fallback_message(
         create_values.get("unanswered_fallback_message")
     )
+    create_values["email_auto_reply_message"] = normalize_email_auto_reply_message(
+        create_values.get("email_auto_reply_message")
+    )
     bot_profile = BotProfile(
         tenant_id=tenant_id,
         **create_values,
@@ -148,6 +156,8 @@ def create_bot_profile(
         bot_profile.welcome_message = DEFAULT_BOT_WELCOME_MESSAGE
     if not bot_profile.unanswered_fallback_message or not bot_profile.unanswered_fallback_message.strip():
         bot_profile.unanswered_fallback_message = DEFAULT_UNANSWERED_FALLBACK_MESSAGE
+    if not bot_profile.email_auto_reply_message or not bot_profile.email_auto_reply_message.strip():
+        bot_profile.email_auto_reply_message = DEFAULT_EMAIL_AUTO_REPLY_MESSAGE
     db.add(bot_profile)
     db.flush()
 
@@ -184,6 +194,8 @@ def create_bot_profile(
             "support_group_chat_id": bot_profile.support_group_chat_id,
             "welcome_message": bot_profile.welcome_message,
             "unanswered_fallback_message": bot_profile.unanswered_fallback_message,
+            "email_auto_reply_enabled": bot_profile.email_auto_reply_enabled,
+            "email_auto_reply_message": bot_profile.email_auto_reply_message,
             "faq_hint_keywords_json": bot_profile.faq_hint_keywords_json,
             "high_risk_keywords_json": bot_profile.high_risk_keywords_json,
             "sensitive_keywords_json": bot_profile.sensitive_keywords_json,
@@ -215,6 +227,10 @@ def update_bot_profile(
     if "unanswered_fallback_message" in updates:
         updates["unanswered_fallback_message"] = normalize_unanswered_fallback_message(
             updates.get("unanswered_fallback_message")
+        )
+    if "email_auto_reply_message" in updates:
+        updates["email_auto_reply_message"] = normalize_email_auto_reply_message(
+            updates.get("email_auto_reply_message")
         )
     if "tenant_id" in updates:
         ensure_tenant_access(user, updates["tenant_id"])

@@ -221,6 +221,8 @@ export interface BotProfile {
   support_group_chat_id?: string | null;
   welcome_message: string;
   unanswered_fallback_message: string;
+  email_auto_reply_enabled: boolean;
+  email_auto_reply_message: string;
   language: string;
   industry?: string | null;
   faq_hint_keywords_json: string[];
@@ -241,6 +243,8 @@ export interface BotProfileCreatePayload {
   support_group_chat_id?: string | null;
   welcome_message: string;
   unanswered_fallback_message: string;
+  email_auto_reply_enabled: boolean;
+  email_auto_reply_message: string;
   telegram_bot_description?: string | null;
   language: string;
   industry?: string | null;
@@ -257,6 +261,8 @@ export interface BotProfileUpdatePayload {
   support_group_chat_id?: string | null;
   welcome_message?: string;
   unanswered_fallback_message?: string;
+  email_auto_reply_enabled?: boolean;
+  email_auto_reply_message?: string;
   telegram_bot_description?: string | null;
   language?: string;
   industry?: string | null;

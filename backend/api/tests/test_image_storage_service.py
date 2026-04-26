@@ -5,10 +5,10 @@ from uuid import UUID, uuid4
 
 import pytest
 
-from backend.api.app.services.image_storage_service import ImageValidationError, R2ImageStorageService, normalize_image_assets
+from backend.api.app.services.image_storage_service import ImageStorageError, ImageValidationError, ObjectImageStorageService, normalize_image_assets
 
 
-class FakeR2Client:
+class FakeObjectStorageClient:
     def __init__(self) -> None:
         self.put_calls: list[dict] = []
         self.delete_calls: list[dict] = []
@@ -22,21 +22,27 @@ class FakeR2Client:
         return {"ResponseMetadata": {"HTTPStatusCode": 204}}
 
 
-def r2_settings() -> SimpleNamespace:
+def object_storage_settings() -> SimpleNamespace:
     return SimpleNamespace(
-        r2_endpoint_url="https://example.r2.cloudflarestorage.com",
-        r2_access_key_id="access-key",
-        r2_secret_access_key="secret-key",
-        r2_bucket="media-bucket",
-        r2_public_base_url="https://media.example.com",
+        object_storage_endpoint_url="https://s3.us-west-004.backblazeb2.com",
+        object_storage_access_key_id="access-key",
+        object_storage_secret_access_key="secret-key",
+        object_storage_bucket="media-bucket",
+        object_storage_public_base_url="https://media.example.com",
+        object_storage_max_image_bytes=5 * 1024 * 1024,
+        r2_endpoint_url=None,
+        r2_access_key_id=None,
+        r2_secret_access_key=None,
+        r2_bucket=None,
+        r2_public_base_url=None,
         r2_max_image_bytes=5 * 1024 * 1024,
     )
 
 
 def test_upload_image_stores_object_and_returns_public_asset() -> None:
     tenant_id = uuid4()
-    client = FakeR2Client()
-    service = R2ImageStorageService(settings=r2_settings(), client=client)
+    client = FakeObjectStorageClient()
+    service = ObjectImageStorageService(settings=object_storage_settings(), client=client)
 
     asset = service.upload_image(
         tenant_id=tenant_id,
@@ -56,7 +62,7 @@ def test_upload_image_stores_object_and_returns_public_asset() -> None:
 
 
 def test_upload_image_rejects_unsupported_type() -> None:
-    service = R2ImageStorageService(settings=r2_settings(), client=FakeR2Client())
+    service = ObjectImageStorageService(settings=object_storage_settings(), client=FakeObjectStorageClient())
 
     with pytest.raises(ImageValidationError):
         service.upload_image(
@@ -69,8 +75,8 @@ def test_upload_image_rejects_unsupported_type() -> None:
 
 
 def test_delete_removed_image_assets_deletes_only_removed_objects() -> None:
-    client = FakeR2Client()
-    service = R2ImageStorageService(settings=r2_settings(), client=client)
+    client = FakeObjectStorageClient()
+    service = ObjectImageStorageService(settings=object_storage_settings(), client=client)
 
     service.delete_removed_image_assets(
         old_assets=[
@@ -93,11 +99,41 @@ def test_delete_removed_image_assets_deletes_only_removed_objects() -> None:
 def test_tenant_id_from_object_key_parses_owned_prefix() -> None:
     tenant_id = uuid4()
 
-    parsed = R2ImageStorageService.tenant_id_from_object_key(f"tenants/{tenant_id}/content-images/faq/image.png")
+    parsed = ObjectImageStorageService.tenant_id_from_object_key(f"tenants/{tenant_id}/content-images/faq/image.png")
 
     assert parsed == tenant_id
     assert isinstance(parsed, UUID)
-    assert R2ImageStorageService.tenant_id_from_object_key("bad/key") is None
+    assert ObjectImageStorageService.tenant_id_from_object_key("bad/key") is None
+
+
+def test_missing_object_storage_config_uses_generic_error_message() -> None:
+    settings = SimpleNamespace(
+        object_storage_endpoint_url=None,
+        object_storage_access_key_id=None,
+        object_storage_secret_access_key=None,
+        object_storage_bucket=None,
+        object_storage_public_base_url=None,
+        object_storage_max_image_bytes=5 * 1024 * 1024,
+        r2_endpoint_url=None,
+        r2_access_key_id=None,
+        r2_secret_access_key=None,
+        r2_bucket=None,
+        r2_public_base_url=None,
+        r2_max_image_bytes=5 * 1024 * 1024,
+    )
+    service = ObjectImageStorageService(settings=settings, client=FakeObjectStorageClient())
+
+    with pytest.raises(ImageStorageError) as exc_info:
+        service.upload_image(
+            tenant_id=uuid4(),
+            resource_type="faq",
+            filename="price.png",
+            content_type="image/png",
+            data=b"png-bytes",
+        )
+
+    assert "Object image storage is not configured" in str(exc_info.value)
+    assert "R2" not in str(exc_info.value)
 
 
 def test_normalize_image_assets_dedupes_invalid_items() -> None:

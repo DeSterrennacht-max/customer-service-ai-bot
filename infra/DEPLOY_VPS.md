@@ -30,15 +30,15 @@ Edit `infra/env/production.env` and replace every placeholder value before the f
 - `APP_DEFAULT_SUPER_ADMIN_PASSWORD`
 - `APP_OPENAI_API_KEY`
 - `APP_WEBHOOK_SECRET`
-- `APP_R2_ENDPOINT_URL`
-- `APP_R2_ACCESS_KEY_ID`
-- `APP_R2_SECRET_ACCESS_KEY`
-- `APP_R2_BUCKET`
-- `APP_R2_PUBLIC_BASE_URL`
+- `APP_OBJECT_STORAGE_ENDPOINT_URL`
+- `APP_OBJECT_STORAGE_ACCESS_KEY_ID`
+- `APP_OBJECT_STORAGE_SECRET_ACCESS_KEY`
+- `APP_OBJECT_STORAGE_BUCKET`
+- `APP_OBJECT_STORAGE_PUBLIC_BASE_URL`
 
 Keep `APP_AUTO_CREATE_SCHEMA=true` and `APP_BOOTSTRAP_DEMO_DATA=true` only for the first successful bootstrap. Switch them both to `false` after the first validated deployment.
 
-For FAQ/knowledge-page image replies, create a Cloudflare R2 bucket and bind a public custom domain, then set `APP_R2_PUBLIC_BASE_URL` to that domain, for example `https://media.example.com`.
+For FAQ/knowledge-page image replies, create a Backblaze B2 bucket or other S3-compatible bucket and configure a public image domain. Set `APP_OBJECT_STORAGE_PUBLIC_BASE_URL` to that domain, for example `https://media.example.com`.
 
 ## 3. Start the stack
 
@@ -70,12 +70,13 @@ docker compose --env-file ./env/production.env ps
 docker compose --env-file ./env/production.env logs -f api worker web nginx
 ```
 
-For releases with database migrations, run Alembic from the API image after pulling the new code and before relying on the new UI:
+For releases with database migrations, build the updated API image first, then run Alembic from that image before relying on the new UI:
 
 ```bash
 cd /opt/customer-service-ai-bot/infra
+docker compose --env-file ./env/production.env build api worker web
 docker compose --env-file ./env/production.env run --rm api sh -c "cd backend/api && alembic upgrade head"
-docker compose --env-file ./env/production.env up -d --build
+docker compose --env-file ./env/production.env up -d
 ```
 
 Expected result:
