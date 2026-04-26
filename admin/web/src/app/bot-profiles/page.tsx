@@ -69,7 +69,7 @@ const BOT_GUIDE = [
   },
   {
     title: "邮箱自动回复",
-    description: "用户整条消息是邮箱地址时，会直接回复这里配置的内容，适合开户、注册、资料收集等场景。"
+    description: "用户消息里包含邮箱地址时，会直接回复这里配置的内容，适合开户、注册、资料收集等场景。"
   },
   {
     title: "Bot Description",
@@ -461,7 +461,7 @@ export default function BotProfilesPage() {
                 />
                 <span>启用邮箱格式自动回复</span>
               </label>
-              <p>当用户只发送一个邮箱地址时，机器人会直接回复下面这段内容；如果消息里还有其他文字，则继续走 FAQ/知识页流程。</p>
+              <p>当用户消息里包含邮箱地址时，机器人会直接回复下面这段内容；如果关闭开关，则继续走 FAQ/知识页流程。</p>
             </div>
 
             <label>

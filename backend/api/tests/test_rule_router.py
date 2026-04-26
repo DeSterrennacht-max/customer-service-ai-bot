@@ -63,14 +63,29 @@ def test_rule_router_routes_whole_email_message() -> None:
     assert result.entities == {"email": "customer@example.com"}
 
 
-def test_rule_router_does_not_route_email_inside_sentence() -> None:
+def test_rule_router_routes_email_inside_sentence() -> None:
     bot_profile = SimpleNamespace(
         high_risk_keywords_json=["赔偿"],
         sensitive_keywords_json=["辱骂"],
         email_auto_reply_enabled=True,
     )
 
-    result = RuleRouter().route("我的邮箱是 customer@example.com", bot_profile=bot_profile)
+    result = RuleRouter().route("我的邮箱是 customer@example.com，请帮我开户。", bot_profile=bot_profile)
+
+    assert result is not None
+    assert result.action == "email_auto_reply"
+    assert result.intent == "email_capture"
+    assert result.entities == {"email": "customer@example.com"}
+
+
+def test_rule_router_does_not_route_invalid_email_like_text() -> None:
+    bot_profile = SimpleNamespace(
+        high_risk_keywords_json=["赔偿"],
+        sensitive_keywords_json=["辱骂"],
+        email_auto_reply_enabled=True,
+    )
+
+    result = RuleRouter().route("我的邮箱是 customer@example", bot_profile=bot_profile)
 
     assert result is None
 

@@ -9,7 +9,7 @@ from backend.api.app.db.models.entities import BotProfile
 DEFAULT_HIGH_RISK_KEYWORDS = {"人工", "投诉", "退款", "退费", "律师", "举报"}
 DEFAULT_SENSITIVE_KEYWORDS = {"骂", "骗", "垃圾", "诈骗"}
 START_COMMANDS = {"/start"}
-EMAIL_PATTERN = re.compile(r"^[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}$", re.IGNORECASE)
+EMAIL_PATTERN = re.compile(r"(?<![A-Z0-9._%+\-])([A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,})(?![A-Z0-9_%+\-])", re.IGNORECASE)
 
 
 @dataclass(slots=True)
@@ -39,13 +39,13 @@ class RuleRouter:
         if matched_risk:
             return RuleRouteResult(action="handoff", intent="human_request", risk_level="high", matched_keywords=matched_risk)
 
-        normalized_message = message.strip()
-        if self._email_auto_reply_enabled(bot_profile) and EMAIL_PATTERN.fullmatch(normalized_message):
+        email_match = EMAIL_PATTERN.search(message)
+        if self._email_auto_reply_enabled(bot_profile) and email_match:
             return RuleRouteResult(
                 action="email_auto_reply",
                 intent="email_capture",
                 risk_level="low",
-                entities={"email": normalized_message},
+                entities={"email": email_match.group(1)},
             )
 
         return None

@@ -260,7 +260,7 @@ def test_handle_customer_message_uses_bot_email_auto_reply_before_faq() -> None:
     service.knowledge.retrieve_faq = lambda *args, **kwargs: pytest.fail("邮箱自动回复不应查 FAQ")
     service.knowledge.retrieve_knowledge_page = lambda *args, **kwargs: pytest.fail("邮箱自动回复不应查知识页")
 
-    result = service.handle_customer_message(None, conversation, "customer@example.com", {}, None)
+    result = service.handle_customer_message(None, conversation, "我的邮箱是 customer@example.com，请继续开户。", {}, None)
 
     assert result.action == "template_reply"
     assert result.intent == "email_capture"
@@ -294,7 +294,7 @@ def test_handle_customer_message_ignores_email_auto_reply_when_disabled() -> Non
     service.handoff.create_ticket = lambda *args, **kwargs: ticket
     service.handoff.notify_support_group = lambda *args, **kwargs: None
 
-    result = service.handle_customer_message(None, conversation, "customer@example.com", {}, None)
+    result = service.handle_customer_message(None, conversation, "我的邮箱是 customer@example.com，请继续开户。", {}, None)
 
     assert result.action == "handoff"
     assert result.intent == "unanswered"
@@ -616,7 +616,7 @@ def test_handle_business_customer_message_records_and_replies_on_email_hit() -> 
         telegram_user_id="6059820900",
         display_name="customer",
         business_connection_id="business-connection-1",
-        text="customer@example.com",
+        text="我的邮箱是 customer@example.com，请继续开户。",
         raw_payload={"business_message": {"message_id": 211}},
         telegram_message_id="211",
     )
@@ -627,7 +627,7 @@ def test_handle_business_customer_message_records_and_replies_on_email_hit() -> 
     assert result.intent == "email_capture"
     assert result.text == "已收到邮箱。"
     assert result.source_type == "email_auto_reply"
-    assert captured["content_text"] == "customer@example.com"
+    assert captured["content_text"] == "我的邮箱是 customer@example.com，请继续开户。"
 
 
 def test_handle_business_customer_message_ignores_miss_without_recording_or_handoff() -> None:
