@@ -10,9 +10,22 @@ from backend.api.app.db.models.entities import RiskLevel
 from backend.api.app.schemas.common import BaseResponse
 
 
+class ImageAsset(BaseModel):
+    url: str
+    object_key: str
+    filename: str
+    content_type: str
+    size_bytes: int
+
+
+class ImageDeleteRequest(BaseModel):
+    object_key: str
+
+
 class FAQBase(BaseModel):
     question_patterns_json: list[str] = Field(default_factory=list)
     canonical_answer: str
+    image_assets_json: list[ImageAsset] = Field(default_factory=list)
     answer_style_notes: str | None = None
     category: str | None = None
     product_scope: str | None = None
@@ -29,6 +42,7 @@ class FAQCreate(FAQBase):
 class FAQUpdate(BaseModel):
     question_patterns_json: list[str] | None = None
     canonical_answer: str | None = None
+    image_assets_json: list[ImageAsset] | None = None
     answer_style_notes: str | None = None
     category: str | None = None
     product_scope: str | None = None
@@ -46,6 +60,7 @@ class FAQResponse(BaseResponse, FAQBase):
 class KnowledgePageBase(BaseModel):
     title: str
     body_markdown: str
+    image_assets_json: list[ImageAsset] = Field(default_factory=list)
     tags_json: list[str] = Field(default_factory=list)
     product_scope: str | None = None
     risk_level: RiskLevel = RiskLevel.LOW
@@ -60,6 +75,7 @@ class KnowledgePageCreate(KnowledgePageBase):
 class KnowledgePageUpdate(BaseModel):
     title: str | None = None
     body_markdown: str | None = None
+    image_assets_json: list[ImageAsset] | None = None
     tags_json: list[str] | None = None
     product_scope: str | None = None
     risk_level: RiskLevel | None = None

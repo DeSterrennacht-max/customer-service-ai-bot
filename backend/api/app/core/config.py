@@ -36,6 +36,12 @@ class Settings(BaseSettings):
     generator_model: str = "gpt-4.1-mini"
     webhook_secret: str | None = Field(default=None)
     public_base_url: str | None = None
+    r2_endpoint_url: str | None = None
+    r2_access_key_id: str | None = None
+    r2_secret_access_key: str | None = None
+    r2_bucket: str | None = None
+    r2_public_base_url: str | None = None
+    r2_max_image_bytes: int = 5 * 1024 * 1024
     cors_allow_origins: list[str] = [
         "http://localhost:3000",
         "http://127.0.0.1:3000",

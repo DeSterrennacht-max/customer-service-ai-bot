@@ -5,14 +5,16 @@ import { useRouter } from "next/navigation";
 
 import { BotScopePicker } from "@/components/bot-scope-picker";
 import { HelpTooltip } from "@/components/help-tooltip";
+import { ImageAssetManager } from "@/components/image-asset-manager";
 import { Panel } from "@/components/panel";
 import { AuthError } from "@/lib/auth";
 import { api } from "@/lib/api";
-import { BotProfile, CurrentUser, FAQCreatePayload, FAQEntry, FAQUpdatePayload, RiskLevel } from "@/types/api";
+import { BotProfile, CurrentUser, FAQCreatePayload, FAQEntry, FAQUpdatePayload, ImageAsset, RiskLevel } from "@/types/api";
 
 interface FAQFormState {
   questionPatternsText: string;
   canonical_answer: string;
+  image_assets_json: ImageAsset[];
   risk_level: RiskLevel;
   priority: number;
   status: string;
@@ -21,6 +23,7 @@ interface FAQFormState {
 const DEFAULT_FORM: FAQFormState = {
   questionPatternsText: "",
   canonical_answer: "",
+  image_assets_json: [],
   risk_level: "low",
   priority: 100,
   status: "active"
@@ -67,6 +70,7 @@ function faqToFormState(faq: FAQEntry): FAQFormState {
   return {
     questionPatternsText: faq.question_patterns_json.join("\n"),
     canonical_answer: faq.canonical_answer,
+    image_assets_json: faq.image_assets_json ?? [],
     risk_level: faq.risk_level,
     priority: faq.priority,
     status: faq.status
@@ -164,7 +168,19 @@ export default function FAQsPage() {
     setForm((current) => ({ ...current, [key]: value }));
   }
 
-  function resetForm() {
+  function cleanupUnsavedImages() {
+    const originalFaq = editingFaqId ? faqs.find((faq) => faq.id === editingFaqId) : null;
+    const persistedKeys = new Set((originalFaq?.image_assets_json ?? []).map((asset) => asset.object_key));
+    const pendingAssets = form.image_assets_json.filter((asset) => !persistedKeys.has(asset.object_key));
+    if (pendingAssets.length) {
+      void Promise.allSettled(pendingAssets.map((asset) => api.deleteImage(asset.object_key)));
+    }
+  }
+
+  function resetForm(cleanupImages = false) {
+    if (cleanupImages) {
+      cleanupUnsavedImages();
+    }
     setEditingFaqId(null);
     setConfirmDeleteFaqId(null);
     setForm(DEFAULT_FORM);
@@ -185,6 +201,64 @@ export default function FAQsPage() {
     }
     const nextFaqs = await api.faqs(selectedBotId);
     setFaqs(nextFaqs);
+  }
+
+  function isPersistedImage(asset: ImageAsset): boolean {
+    if (!editingFaqId) {
+      return false;
+    }
+    const originalFaq = faqs.find((faq) => faq.id === editingFaqId);
+    return Boolean(originalFaq?.image_assets_json?.some((item) => item.object_key === asset.object_key));
+  }
+
+  function handleImageUpload(file: File) {
+    setSubmitError(null);
+    setSubmitMessage(null);
+    if (!selectedBot) {
+      setSubmitError("请先选择一个机器人。");
+      return;
+    }
+
+    startTransition(async () => {
+      try {
+        const asset = await api.uploadImage(selectedBot.id, "faq", file);
+        setForm((current) => ({ ...current, image_assets_json: [...current.image_assets_json, asset] }));
+        setSubmitMessage("图片已上传。保存 FAQ 后会随答案一起生效。");
+      } catch (uploadFailure) {
+        if (uploadFailure instanceof AuthError) {
+          router.replace("/login");
+          return;
+        }
+        setSubmitError(uploadFailure instanceof Error ? uploadFailure.message : "图片上传失败");
+      }
+    });
+  }
+
+  function handleImageRemove(asset: ImageAsset) {
+    setSubmitError(null);
+    setSubmitMessage(null);
+    setForm((current) => ({
+      ...current,
+      image_assets_json: current.image_assets_json.filter((item) => item.object_key !== asset.object_key)
+    }));
+
+    if (isPersistedImage(asset)) {
+      setSubmitMessage("图片已从表单移除，保存 FAQ 后会同步删除 R2 原图。");
+      return;
+    }
+
+    startTransition(async () => {
+      try {
+        await api.deleteImage(asset.object_key);
+        setSubmitMessage("图片已删除。");
+      } catch (deleteFailure) {
+        if (deleteFailure instanceof AuthError) {
+          router.replace("/login");
+          return;
+        }
+        setSubmitError(deleteFailure instanceof Error ? deleteFailure.message : "图片删除失败");
+      }
+    });
   }
 
   function handleDelete(faq: FAQEntry) {
@@ -236,6 +310,7 @@ export default function FAQsPage() {
           const payload: FAQUpdatePayload = {
             question_patterns_json: questionPatterns,
             canonical_answer: form.canonical_answer.trim(),
+            image_assets_json: form.image_assets_json,
             risk_level: form.risk_level,
             priority: form.priority,
             status: form.status
@@ -248,6 +323,7 @@ export default function FAQsPage() {
             tenant_id: selectedBot.tenant_id,
             question_patterns_json: questionPatterns,
             canonical_answer: form.canonical_answer.trim(),
+            image_assets_json: form.image_assets_json,
             risk_level: form.risk_level,
             priority: form.priority,
             status: form.status
@@ -292,7 +368,7 @@ export default function FAQsPage() {
           value={selectedBotId}
           onChange={(botProfileId) => {
             setSelectedBotId(botProfileId);
-            resetForm();
+            resetForm(true);
           }}
           disabled={isPending}
         />
@@ -357,6 +433,7 @@ export default function FAQsPage() {
                 </select>
               </label>
             </div>
+            <ImageAssetManager assets={form.image_assets_json} disabled={isPending || !selectedBotId} onUpload={handleImageUpload} onRemove={handleImageRemove} />
             {submitError ? <p className="error-text">{submitError}</p> : null}
             {submitMessage ? <p className="success-text">{submitMessage}</p> : null}
             <div className="button-row">
@@ -364,7 +441,7 @@ export default function FAQsPage() {
                 {isPending ? "提交中..." : editingFaqId ? "保存 FAQ" : "创建 FAQ"}
               </button>
               {editingFaqId ? (
-                <button type="button" className="button-secondary" onClick={resetForm} disabled={isPending}>
+                <button type="button" className="button-secondary" onClick={() => resetForm(true)} disabled={isPending}>
                   取消编辑
                 </button>
               ) : null}
@@ -418,6 +495,21 @@ export default function FAQsPage() {
                 <div className="content-text-block">
                   <span className="content-card-eyebrow">标准答案</span>
                   <p>{faq.canonical_answer}</p>
+                </div>
+
+                <div className="content-section">
+                  <span className="content-card-eyebrow">图片回复</span>
+                  {faq.image_assets_json?.length ? (
+                    <div className="content-chip-row">
+                      {faq.image_assets_json.map((asset) => (
+                        <a key={asset.object_key} className="content-chip" href={asset.url} target="_blank" rel="noreferrer">
+                          {asset.filename}
+                        </a>
+                      ))}
+                    </div>
+                  ) : (
+                    <span className="muted">未设置</span>
+                  )}
                 </div>
 
                 <div className="content-meta-grid">

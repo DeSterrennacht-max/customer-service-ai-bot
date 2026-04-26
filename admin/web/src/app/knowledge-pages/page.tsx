@@ -4,14 +4,16 @@ import { FormEvent, useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 
 import { BotScopePicker } from "@/components/bot-scope-picker";
+import { ImageAssetManager } from "@/components/image-asset-manager";
 import { Panel } from "@/components/panel";
 import { AuthError } from "@/lib/auth";
 import { api } from "@/lib/api";
-import { BotProfile, CurrentUser, KnowledgePage, KnowledgePageCreatePayload, KnowledgePageUpdatePayload, RiskLevel } from "@/types/api";
+import { BotProfile, CurrentUser, ImageAsset, KnowledgePage, KnowledgePageCreatePayload, KnowledgePageUpdatePayload, RiskLevel } from "@/types/api";
 
 interface KnowledgeFormState {
   title: string;
   body_markdown: string;
+  image_assets_json: ImageAsset[];
   tagsText: string;
   risk_level: RiskLevel;
   status: string;
@@ -20,6 +22,7 @@ interface KnowledgeFormState {
 const DEFAULT_FORM: KnowledgeFormState = {
   title: "",
   body_markdown: "",
+  image_assets_json: [],
   tagsText: "",
   risk_level: "low",
   status: "active"
@@ -55,6 +58,7 @@ function knowledgePageToForm(page: KnowledgePage): KnowledgeFormState {
   return {
     title: page.title,
     body_markdown: page.body_markdown,
+    image_assets_json: page.image_assets_json ?? [],
     tagsText: page.tags_json.join("\n"),
     risk_level: page.risk_level,
     status: page.status
@@ -156,7 +160,19 @@ export default function KnowledgePagesPage() {
     setForm((current) => ({ ...current, [key]: value }));
   }
 
-  function resetForm() {
+  function cleanupUnsavedImages() {
+    const originalPage = editingPageId ? pages.find((page) => page.id === editingPageId) : null;
+    const persistedKeys = new Set((originalPage?.image_assets_json ?? []).map((asset) => asset.object_key));
+    const pendingAssets = form.image_assets_json.filter((asset) => !persistedKeys.has(asset.object_key));
+    if (pendingAssets.length) {
+      void Promise.allSettled(pendingAssets.map((asset) => api.deleteImage(asset.object_key)));
+    }
+  }
+
+  function resetForm(cleanupImages = false) {
+    if (cleanupImages) {
+      cleanupUnsavedImages();
+    }
     setEditingPageId(null);
     setConfirmDeletePageId(null);
     setForm(DEFAULT_FORM);
@@ -177,6 +193,64 @@ export default function KnowledgePagesPage() {
     }
     const nextPages = await api.knowledgePages(selectedBotId);
     setPages(nextPages);
+  }
+
+  function isPersistedImage(asset: ImageAsset): boolean {
+    if (!editingPageId) {
+      return false;
+    }
+    const originalPage = pages.find((page) => page.id === editingPageId);
+    return Boolean(originalPage?.image_assets_json?.some((item) => item.object_key === asset.object_key));
+  }
+
+  function handleImageUpload(file: File) {
+    setSubmitError(null);
+    setSubmitMessage(null);
+    if (!selectedBot) {
+      setSubmitError("请先选择一个机器人。");
+      return;
+    }
+
+    startTransition(async () => {
+      try {
+        const asset = await api.uploadImage(selectedBot.id, "knowledge_page", file);
+        setForm((current) => ({ ...current, image_assets_json: [...current.image_assets_json, asset] }));
+        setSubmitMessage("图片已上传。保存知识页后会随答案一起生效。");
+      } catch (uploadFailure) {
+        if (uploadFailure instanceof AuthError) {
+          router.replace("/login");
+          return;
+        }
+        setSubmitError(uploadFailure instanceof Error ? uploadFailure.message : "图片上传失败");
+      }
+    });
+  }
+
+  function handleImageRemove(asset: ImageAsset) {
+    setSubmitError(null);
+    setSubmitMessage(null);
+    setForm((current) => ({
+      ...current,
+      image_assets_json: current.image_assets_json.filter((item) => item.object_key !== asset.object_key)
+    }));
+
+    if (isPersistedImage(asset)) {
+      setSubmitMessage("图片已从表单移除，保存知识页后会同步删除 R2 原图。");
+      return;
+    }
+
+    startTransition(async () => {
+      try {
+        await api.deleteImage(asset.object_key);
+        setSubmitMessage("图片已删除。");
+      } catch (deleteFailure) {
+        if (deleteFailure instanceof AuthError) {
+          router.replace("/login");
+          return;
+        }
+        setSubmitError(deleteFailure instanceof Error ? deleteFailure.message : "图片删除失败");
+      }
+    });
   }
 
   function handleDelete(page: KnowledgePage) {
@@ -228,6 +302,7 @@ export default function KnowledgePagesPage() {
           const payload: KnowledgePageUpdatePayload = {
             title: form.title.trim(),
             body_markdown: form.body_markdown.trim(),
+            image_assets_json: form.image_assets_json,
             tags_json: tags,
             risk_level: form.risk_level,
             status: form.status
@@ -240,6 +315,7 @@ export default function KnowledgePagesPage() {
             tenant_id: selectedBot.tenant_id,
             title: form.title.trim(),
             body_markdown: form.body_markdown.trim(),
+            image_assets_json: form.image_assets_json,
             tags_json: tags,
             risk_level: form.risk_level,
             status: form.status
@@ -284,7 +360,7 @@ export default function KnowledgePagesPage() {
           value={selectedBotId}
           onChange={(botProfileId) => {
             setSelectedBotId(botProfileId);
-            resetForm();
+            resetForm(true);
           }}
           disabled={isPending}
         />
@@ -338,6 +414,7 @@ export default function KnowledgePagesPage() {
                 </select>
               </label>
             </div>
+            <ImageAssetManager assets={form.image_assets_json} disabled={isPending || !selectedBotId} onUpload={handleImageUpload} onRemove={handleImageRemove} />
             {submitError ? <p className="error-text">{submitError}</p> : null}
             {submitMessage ? <p className="success-text">{submitMessage}</p> : null}
             <div className="button-row">
@@ -345,7 +422,7 @@ export default function KnowledgePagesPage() {
                 {isPending ? "提交中..." : editingPageId ? "保存知识页" : "创建知识页"}
               </button>
               {editingPageId ? (
-                <button type="button" className="button-secondary" onClick={resetForm} disabled={isPending}>
+                <button type="button" className="button-secondary" onClick={() => resetForm(true)} disabled={isPending}>
                   取消编辑
                 </button>
               ) : null}
@@ -404,6 +481,21 @@ export default function KnowledgePagesPage() {
                         ))
                       : <span className="muted">未设置</span>}
                   </div>
+                </div>
+
+                <div className="content-section">
+                  <span className="content-card-eyebrow">图片回复</span>
+                  {page.image_assets_json?.length ? (
+                    <div className="content-chip-row">
+                      {page.image_assets_json.map((asset) => (
+                        <a key={asset.object_key} className="content-chip" href={asset.url} target="_blank" rel="noreferrer">
+                          {asset.filename}
+                        </a>
+                      ))}
+                    </div>
+                  ) : (
+                    <span className="muted">未设置</span>
+                  )}
                 </div>
 
                 <div className="content-meta-grid">

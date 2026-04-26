@@ -15,8 +15,9 @@
 
 ## 当前版本
 
-当前发布版本：`v1.1.4`
+当前发布版本：`v1.2.0`
 
+- `v1.2.0`: 新增 Cloudflare R2 图片存储；FAQ 与知识页支持上传图片并绑定到自动回复，命中后先发送文字再发送图片，后台列表和网页可直接使用 R2 公网图片 URL。
 - `v1.1.4`: 优化 FAQ 与知识页列表排版；将拥挤表格改为卡片式信息布局，长答案、正文摘要、问题模式和标签更易阅读。
 - `v1.1.3`: Bot 配置页支持按需读取当前 Telegram Bot Description；编辑已有 Bot 时可先从 Telegram 拉取当前说明，再修改并保存，避免盲改和频繁自动读取。
 - `v1.1.2`: 调整 Telegram Business 私聊自动回复规则；普通 Bot 私聊未命中时发送可配置兜底回复并转人工，Business 私聊仅在 FAQ/知识库命中时自动回复，未命中不记录、不私聊兜底、不转发客服群；Bot 配置页新增兜底回复和 Bot Description 同步。
@@ -114,6 +115,21 @@ docker compose --env-file ./env/production.env up -d
 更完整的 VPS 落地步骤见 `infra/DEPLOY_VPS.md`。
 
 保存启用状态的 Bot Profile 时，后端会自动向 Telegram 注册对应的 `setWebhook`。生产环境必须配置 `APP_PUBLIC_BASE_URL`，或至少配置 `NEXT_PUBLIC_API_BASE_URL` 作为兼容 fallback。
+
+### R2 图片存储
+
+FAQ 和知识页支持上传图片到 Cloudflare R2，并在自动回复命中时随文字一起发送。生产环境需要先在 Cloudflare 创建 R2 bucket，并绑定可公开访问的自定义域名，例如 `https://media.example.com`。
+
+需要配置：
+
+```bash
+APP_R2_ENDPOINT_URL=https://<account-id>.r2.cloudflarestorage.com
+APP_R2_ACCESS_KEY_ID=<r2-access-key-id>
+APP_R2_SECRET_ACCESS_KEY=<r2-secret-access-key>
+APP_R2_BUCKET=customer-service-ai-bot-media
+APP_R2_PUBLIC_BASE_URL=https://media.example.com
+APP_R2_MAX_IMAGE_BYTES=5242880
+```
 
 ## 下一步建议
 

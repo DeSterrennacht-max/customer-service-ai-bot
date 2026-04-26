@@ -73,6 +73,29 @@ class TelegramService:
         finally:
             await bot.session.close()
 
+    async def send_photo(
+        self,
+        bot_token: str,
+        chat_id: str,
+        photo: str,
+        reply_to_message_id: int | None = None,
+        business_connection_id: str | None = None,
+    ) -> int | None:
+        bot = Bot(token=bot_token)
+        try:
+            response = await bot.send_photo(
+                chat_id=chat_id,
+                photo=photo,
+                reply_to_message_id=reply_to_message_id,
+                business_connection_id=business_connection_id,
+            )
+            return response.message_id
+        except Exception:  # pragma: no cover - network boundary
+            logger.exception("Failed to send Telegram photo")
+            return None
+        finally:
+            await bot.session.close()
+
     async def set_bot_description(self, bot_token: str, description: str) -> bool:
         bot = Bot(token=bot_token)
         try:
@@ -103,6 +126,16 @@ class TelegramService:
         business_connection_id: str | None = None,
     ) -> int | None:
         return self._run_coroutine_sync(self.send_text(bot_token, chat_id, text, reply_to_message_id, business_connection_id))
+
+    def send_photo_sync(
+        self,
+        bot_token: str,
+        chat_id: str,
+        photo: str,
+        reply_to_message_id: int | None = None,
+        business_connection_id: str | None = None,
+    ) -> int | None:
+        return self._run_coroutine_sync(self.send_photo(bot_token, chat_id, photo, reply_to_message_id, business_connection_id))
 
     def send_chat_action_sync(
         self,

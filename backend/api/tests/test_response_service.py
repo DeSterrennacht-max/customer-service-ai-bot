@@ -94,6 +94,33 @@ def test_build_answer_for_faq_uses_faq_lookup() -> None:
     assert structured is False
 
 
+def test_build_answer_result_carries_faq_images() -> None:
+    service = ResponseService()
+    conversation = SimpleNamespace(bot_profile_id=uuid4())
+    expected = RetrievedKnowledge(
+        text="标准版价格见下图。",
+        evidence=["faq:test-faq"],
+        source_type="faq",
+        structured=False,
+        image_assets=[
+            {
+                "url": "https://media.example.com/price.png",
+                "object_key": "tenants/test/content-images/faq/price.png",
+                "filename": "price.png",
+                "content_type": "image/png",
+                "size_bytes": 128,
+            }
+        ],
+    )
+
+    service.knowledge.retrieve_faq = lambda db, bot_profile_id, text: expected
+
+    result = service._build_answer_result(None, conversation, "价格图", "faq")
+
+    assert result is expected
+    assert result.image_assets[0]["url"] == "https://media.example.com/price.png"
+
+
 def test_build_answer_for_knowledge_uses_page_lookup_without_prefix() -> None:
     service = ResponseService()
     conversation = SimpleNamespace(bot_profile_id=uuid4())
@@ -598,6 +625,87 @@ def test_dispatch_reply_sends_business_message_with_connection_id() -> None:
         "text": "这是 Business 回复。",
         "business_connection_id": "business-connection-1",
     }
+
+
+def test_dispatch_reply_sends_text_then_r2_photos() -> None:
+    service = ResponseService()
+    conversation = SimpleNamespace(
+        id=uuid4(),
+        tenant_id=uuid4(),
+        bot_profile_id=uuid4(),
+        telegram_chat_id="123456",
+        telegram_business_connection_id="business-connection-1",
+    )
+    calls: list[dict[str, str]] = []
+    recorded_payload: dict = {}
+
+    class EmptyQuery:
+        def filter(self, *args, **kwargs):
+            return self
+
+        def first(self):
+            return None
+
+    class FakeDb:
+        def query(self, *args, **kwargs):
+            return EmptyQuery()
+
+    def fake_send_text_sync(bot_token: str, chat_id: str, text: str, **kwargs):
+        calls.append({"kind": "text", "bot_token": bot_token, "chat_id": chat_id, "text": text, **kwargs})
+        return 10004
+
+    def fake_send_photo_sync(bot_token: str, chat_id: str, photo: str, **kwargs):
+        calls.append({"kind": "photo", "bot_token": bot_token, "chat_id": chat_id, "photo": photo, **kwargs})
+        return 10005
+
+    def fake_record_message(*args, **kwargs):
+        recorded_payload.update(kwargs["raw_payload_json"])
+        return SimpleNamespace()
+
+    service.conversations.get_bot_profile = lambda db, bot_profile_id: SimpleNamespace(telegram_bot_token="bot-token")
+    service.telegram.send_text_sync = fake_send_text_sync
+    service.telegram.send_photo_sync = fake_send_photo_sync
+    service.conversations.record_message = fake_record_message
+    service.audit.record = lambda *args, **kwargs: None
+
+    result = PipelineResult(
+        action="template_reply",
+        text="请看价格图。",
+        evidence=["faq:pricing"],
+        risk_level="low",
+        intent="faq",
+        source_type="faq",
+        image_assets=[
+            {
+                "url": "https://media.example.com/price.png",
+                "object_key": "tenants/test/content-images/faq/price.png",
+                "filename": "price.png",
+                "content_type": "image/png",
+                "size_bytes": 128,
+            }
+        ],
+    )
+
+    reply = service.dispatch_reply(FakeDb(), conversation, result)
+
+    assert reply == "请看价格图。"
+    assert calls == [
+        {
+            "kind": "text",
+            "bot_token": "bot-token",
+            "chat_id": "123456",
+            "text": "请看价格图。",
+            "business_connection_id": "business-connection-1",
+        },
+        {
+            "kind": "photo",
+            "bot_token": "bot-token",
+            "chat_id": "123456",
+            "photo": "https://media.example.com/price.png",
+            "business_connection_id": "business-connection-1",
+        },
+    ]
+    assert recorded_payload["photo_message_ids"] == [10005]
 
 
 def test_followup_message_reuses_recent_context_before_generic_knowledge_lookup() -> None:

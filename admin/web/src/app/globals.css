@@ -709,6 +709,89 @@ button:disabled {
   overflow-wrap: anywhere;
 }
 
+/* Image assets */
+.image-manager {
+  border: 1px solid rgba(63, 52, 39, 0.08);
+  border-radius: 18px;
+  background: rgba(250, 247, 241, 0.72);
+  display: grid;
+  gap: 16px;
+  padding: 16px;
+}
+
+.image-manager-header {
+  align-items: flex-start;
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+}
+
+.image-manager-header p {
+  color: var(--muted);
+  font-size: 0.875rem;
+  line-height: 1.7;
+  margin-top: 4px;
+}
+
+.image-upload-button {
+  align-items: center;
+  background: linear-gradient(135deg, #0f766e, #115e59);
+  border-radius: 999px;
+  color: white;
+  cursor: pointer;
+  display: inline-flex;
+  flex-shrink: 0;
+  font-size: 0.9375rem;
+  font-weight: 500;
+  justify-content: center;
+  line-height: 1;
+  padding: 11px 18px;
+}
+
+.image-upload-button input {
+  display: none;
+}
+
+.image-upload-button:has(input:disabled) {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.image-asset-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.image-asset-card {
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.72);
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+}
+
+.image-asset-card img {
+  aspect-ratio: 16 / 9;
+  border-radius: 14px;
+  display: block;
+  object-fit: cover;
+  width: 100%;
+}
+
+.image-asset-body {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.image-asset-body span {
+  color: var(--muted);
+  font-size: 0.8125rem;
+  overflow-wrap: anywhere;
+}
+
 .checkbox-row {
   display: flex;
   align-items: center;
@@ -853,7 +936,8 @@ button:disabled {
   .faq-guide-grid,
   .bot-profile-meta-grid,
   .bot-profile-keyword-grid,
-  .content-meta-grid {
+  .content-meta-grid,
+  .image-asset-grid {
     grid-template-columns: 1fr;
   }
 
@@ -864,6 +948,10 @@ button:disabled {
 
   .content-card-header {
     align-items: stretch;
+    display: grid;
+  }
+
+  .image-manager-header {
     display: grid;
   }
 

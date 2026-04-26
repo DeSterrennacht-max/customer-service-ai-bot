@@ -27,6 +27,10 @@ class FakeBot:
         FakeBot.captured["send_message"] = kwargs
         return SimpleNamespace(message_id=12345)
 
+    async def send_photo(self, **kwargs):
+        FakeBot.captured["send_photo"] = kwargs
+        return SimpleNamespace(message_id=54321)
+
     async def send_chat_action(self, **kwargs):
         FakeBot.captured["send_chat_action"] = kwargs
         return True
@@ -72,6 +76,24 @@ def test_send_chat_action_sync_passes_business_connection_id(monkeypatch) -> Non
     assert FakeBot.captured["send_chat_action"]["chat_id"] == "6059820900"
     assert FakeBot.captured["send_chat_action"]["action"] == "typing"
     assert FakeBot.captured["send_chat_action"]["business_connection_id"] == "business-connection-1"
+    assert FakeBot.captured["session"].closed is True
+
+
+def test_send_photo_sync_passes_business_connection_id(monkeypatch) -> None:
+    FakeBot.captured = {}
+    monkeypatch.setattr(telegram_service_module, "Bot", FakeBot)
+
+    message_id = TelegramService().send_photo_sync(
+        "bot-token",
+        "6059820900",
+        "https://media.example.com/price.png",
+        business_connection_id="business-connection-1",
+    )
+
+    assert message_id == 54321
+    assert FakeBot.captured["send_photo"]["chat_id"] == "6059820900"
+    assert FakeBot.captured["send_photo"]["photo"] == "https://media.example.com/price.png"
+    assert FakeBot.captured["send_photo"]["business_connection_id"] == "business-connection-1"
     assert FakeBot.captured["session"].closed is True
 
 

@@ -12,11 +12,24 @@ from backend.api.app.db.session import get_db
 from backend.api.app.dependencies import ensure_tenant_access, get_accessible_bot_profile, get_current_user, is_super_admin
 from backend.api.app.schemas.content import KnowledgePageCreate, KnowledgePageResponse, KnowledgePageUpdate
 from backend.api.app.services.audit_service import AuditService
+from backend.api.app.services.image_storage_service import ImageStorageError, ImageValidationError, R2ImageStorageService
 from backend.api.app.services.knowledge_service import KnowledgeService
 
 router = APIRouter(prefix="/admin/knowledge-pages", tags=["knowledge-pages"])
 knowledge_service = KnowledgeService()
 audit_service = AuditService()
+image_storage_service = R2ImageStorageService()
+
+
+def raise_image_delete_error(exc: Exception) -> None:
+    raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+def validate_image_assets_or_400(assets: object, tenant_id: UUID) -> list[dict[str, object]]:
+    try:
+        return image_storage_service.validate_assets_owned_by_tenant(assets, tenant_id)
+    except ImageValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("", response_model=list[KnowledgePageResponse])
@@ -45,7 +58,9 @@ def create_knowledge_page(
     ensure_tenant_access(user, tenant_id)
     if tenant_id != bot_profile.tenant_id:
         raise HTTPException(status_code=400, detail="Tenant and bot profile mismatch")
-    page = KnowledgePage(tenant_id=tenant_id, **payload.model_dump(exclude={"tenant_id"}))
+    payload_data = payload.model_dump(exclude={"tenant_id"})
+    payload_data["image_assets_json"] = validate_image_assets_or_400(payload_data.get("image_assets_json"), tenant_id)
+    page = KnowledgePage(tenant_id=tenant_id, **payload_data)
     db.add(page)
     db.flush()
     knowledge_service.rebuild_chunks(db, page)
@@ -75,7 +90,14 @@ def update_knowledge_page(
     if not page:
         raise HTTPException(status_code=404, detail="Knowledge page not found")
     ensure_tenant_access(user, page.tenant_id)
-    for key, value in payload.model_dump(exclude_unset=True).items():
+    payload_data = payload.model_dump(exclude_unset=True)
+    if "image_assets_json" in payload_data:
+        payload_data["image_assets_json"] = validate_image_assets_or_400(payload_data.get("image_assets_json"), page.tenant_id)
+        try:
+            image_storage_service.delete_removed_image_assets(page.image_assets_json, payload_data["image_assets_json"])
+        except (ImageStorageError, ImageValidationError) as exc:
+            raise_image_delete_error(exc)
+    for key, value in payload_data.items():
         setattr(page, key, value)
     db.flush()
     knowledge_service.rebuild_chunks(db, page)
@@ -87,7 +109,7 @@ def update_knowledge_page(
         action="knowledge_page.updated",
         target_type="knowledge_page",
         target_id=str(page.id),
-        detail_json=payload.model_dump(exclude_unset=True),
+        detail_json=payload_data,
     )
     db.commit()
     db.refresh(page)
@@ -104,6 +126,10 @@ def delete_knowledge_page(
     if not page:
         raise HTTPException(status_code=404, detail="Knowledge page not found")
     ensure_tenant_access(user, page.tenant_id)
+    try:
+        image_storage_service.delete_image_assets(page.image_assets_json)
+    except (ImageStorageError, ImageValidationError) as exc:
+        raise_image_delete_error(exc)
     db.execute(delete(KnowledgeChunk).where(KnowledgeChunk.knowledge_page_id == page.id))
     audit_service.record(
         db=db,

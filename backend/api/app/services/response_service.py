@@ -4,7 +4,7 @@ import logging
 import random
 import re
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -15,7 +15,7 @@ from backend.api.app.llm.generator_client import GeneratorLLMClient
 from backend.api.app.services.audit_service import AuditService
 from backend.api.app.services.conversation_service import ConversationService
 from backend.api.app.services.handoff_service import HandoffService
-from backend.api.app.services.knowledge_service import KnowledgeService
+from backend.api.app.services.knowledge_service import KnowledgeService, RetrievedKnowledge
 from backend.api.app.services.rule_router import RuleRouteResult, RuleRouter
 from backend.api.app.services.telegram_service import TelegramService
 
@@ -50,6 +50,7 @@ class PipelineResult:
     intent: str
     source_type: str = "none"
     structured: bool = False
+    image_assets: list[dict[str, object]] = field(default_factory=list)
 
 
 class ResponseService:
@@ -93,53 +94,57 @@ class ResponseService:
 
         followup_first = self._looks_like_followup(text)
         if followup_first:
-            answer, evidence, source_type, structured = self._build_followup_answer(db, conversation, text)
-            if answer:
+            answer_result = self._build_followup_result(db, conversation, text)
+            if answer_result:
                 return PipelineResult(
-                    action="knowledge_reply" if source_type == "knowledge_page" else "template_reply",
-                    text=answer,
-                    evidence=evidence,
+                    action="knowledge_reply" if answer_result.source_type == "knowledge_page" else "template_reply",
+                    text=answer_result.text,
+                    evidence=answer_result.evidence,
                     risk_level="low",
-                    intent="knowledge" if source_type == "knowledge_page" else "faq",
-                    source_type=source_type,
-                    structured=structured,
+                    intent="knowledge" if answer_result.source_type == "knowledge_page" else "faq",
+                    source_type=answer_result.source_type,
+                    structured=answer_result.structured,
+                    image_assets=answer_result.image_assets,
                 )
 
-        answer, evidence, source_type, structured = self._build_answer(db, conversation, text, "faq")
-        if answer:
+        answer_result = self._build_answer_result(db, conversation, text, "faq")
+        if answer_result:
             return PipelineResult(
                 action="template_reply",
-                text=answer,
-                evidence=evidence,
+                text=answer_result.text,
+                evidence=answer_result.evidence,
                 risk_level="low",
                 intent="faq",
-                source_type=source_type,
-                structured=structured,
+                source_type=answer_result.source_type,
+                structured=answer_result.structured,
+                image_assets=answer_result.image_assets,
             )
 
         if not followup_first:
-            answer, evidence, source_type, structured = self._build_followup_answer(db, conversation, text)
-            if answer:
+            answer_result = self._build_followup_result(db, conversation, text)
+            if answer_result:
                 return PipelineResult(
-                    action="knowledge_reply" if source_type == "knowledge_page" else "template_reply",
-                    text=answer,
-                    evidence=evidence,
+                    action="knowledge_reply" if answer_result.source_type == "knowledge_page" else "template_reply",
+                    text=answer_result.text,
+                    evidence=answer_result.evidence,
                     risk_level="low",
-                    intent="knowledge" if source_type == "knowledge_page" else "faq",
-                    source_type=source_type,
-                    structured=structured,
+                    intent="knowledge" if answer_result.source_type == "knowledge_page" else "faq",
+                    source_type=answer_result.source_type,
+                    structured=answer_result.structured,
+                    image_assets=answer_result.image_assets,
                 )
 
-        answer, evidence, source_type, structured = self._build_answer(db, conversation, text, "knowledge")
-        if answer:
+        answer_result = self._build_answer_result(db, conversation, text, "knowledge")
+        if answer_result:
             return PipelineResult(
                 action="knowledge_reply",
-                text=answer,
-                evidence=evidence,
+                text=answer_result.text,
+                evidence=answer_result.evidence,
                 risk_level="low",
                 intent="knowledge",
-                source_type=source_type,
-                structured=structured,
+                source_type=answer_result.source_type,
+                structured=answer_result.structured,
+                image_assets=answer_result.image_assets,
             )
 
         return self._handoff(
@@ -169,8 +174,8 @@ class ResponseService:
 
         followup_first = bool(conversation and self._looks_like_followup(text))
         if followup_first and conversation:
-            answer, evidence, source_type, structured = self._build_followup_answer(db, conversation, text)
-            if answer:
+            answer_result = self._build_followup_result(db, conversation, text)
+            if answer_result:
                 return self._record_business_reply_candidate(
                     db=db,
                     bot_profile=bot_profile,
@@ -182,14 +187,11 @@ class ResponseService:
                     text=text,
                     raw_payload=raw_payload,
                     telegram_message_id=telegram_message_id,
-                    answer=answer,
-                    evidence=evidence,
-                    source_type=source_type,
-                    structured=structured,
+                    answer_result=answer_result,
                 )
 
-        answer, evidence, source_type, structured = self._retrieve_answer(db, bot_profile.id, text, "faq")
-        if answer:
+        answer_result = self._retrieve_answer_result(db, bot_profile.id, text, "faq")
+        if answer_result:
             return self._record_business_reply_candidate(
                 db=db,
                 bot_profile=bot_profile,
@@ -201,15 +203,12 @@ class ResponseService:
                 text=text,
                 raw_payload=raw_payload,
                 telegram_message_id=telegram_message_id,
-                answer=answer,
-                evidence=evidence,
-                source_type=source_type,
-                structured=structured,
+                answer_result=answer_result,
             )
 
         if not followup_first and conversation:
-            answer, evidence, source_type, structured = self._build_followup_answer(db, conversation, text)
-            if answer:
+            answer_result = self._build_followup_result(db, conversation, text)
+            if answer_result:
                 return self._record_business_reply_candidate(
                     db=db,
                     bot_profile=bot_profile,
@@ -221,14 +220,11 @@ class ResponseService:
                     text=text,
                     raw_payload=raw_payload,
                     telegram_message_id=telegram_message_id,
-                    answer=answer,
-                    evidence=evidence,
-                    source_type=source_type,
-                    structured=structured,
+                    answer_result=answer_result,
                 )
 
-        answer, evidence, source_type, structured = self._retrieve_answer(db, bot_profile.id, text, "knowledge")
-        if answer:
+        answer_result = self._retrieve_answer_result(db, bot_profile.id, text, "knowledge")
+        if answer_result:
             return self._record_business_reply_candidate(
                 db=db,
                 bot_profile=bot_profile,
@@ -240,10 +236,7 @@ class ResponseService:
                 text=text,
                 raw_payload=raw_payload,
                 telegram_message_id=telegram_message_id,
-                answer=answer,
-                evidence=evidence,
-                source_type=source_type,
-                structured=structured,
+                answer_result=answer_result,
             )
 
         return None, self._ignored_business_result("unanswered", "medium")
@@ -295,6 +288,23 @@ class ResponseService:
             )
         else:
             telegram_message_id = self.telegram.send_text_sync(bot_profile.telegram_bot_token, conversation.telegram_chat_id, humanized)
+        photo_message_ids: list[int] = []
+        failed_photo_urls: list[str] = []
+        if telegram_message_id and pipeline_result.image_assets:
+            for asset in pipeline_result.image_assets:
+                photo_url = str(asset.get("url") or "").strip()
+                if not photo_url:
+                    continue
+                photo_message_id = self.telegram.send_photo_sync(
+                    bot_profile.telegram_bot_token,
+                    conversation.telegram_chat_id,
+                    photo_url,
+                    business_connection_id=business_connection_id,
+                )
+                if photo_message_id:
+                    photo_message_ids.append(photo_message_id)
+                else:
+                    failed_photo_urls.append(photo_url)
         message = self.conversations.record_message(
             db,
             conversation=conversation,
@@ -305,6 +315,9 @@ class ResponseService:
                 "evidence": pipeline_result.evidence,
                 "source_type": pipeline_result.source_type,
                 "business_connection_id": business_connection_id,
+                "image_assets": pipeline_result.image_assets,
+                "photo_message_ids": photo_message_ids,
+                "failed_photo_urls": failed_photo_urls,
             },
             telegram_message_id=str(telegram_message_id) if telegram_message_id else None,
             intent=pipeline_result.intent,
@@ -325,6 +338,9 @@ class ResponseService:
                 "source_type": pipeline_result.source_type,
                 "evidence": pipeline_result.evidence,
                 "sent": bool(telegram_message_id),
+                "image_count": len(pipeline_result.image_assets),
+                "photo_message_ids": photo_message_ids,
+                "failed_photo_urls": failed_photo_urls,
                 "business_connection_id": business_connection_id,
             },
         )
@@ -352,16 +368,24 @@ class ResponseService:
         )
 
     def _build_answer(self, db: Session, conversation: Conversation, text: str, intent: str) -> tuple[str, list[str], str, bool]:
-        return self._retrieve_answer(db, conversation.bot_profile_id, text, intent)
-
-    def _retrieve_answer(self, db: Session, bot_profile_id: object, text: str, intent: str) -> tuple[str, list[str], str, bool]:
-        if intent == "faq":
-            result = self.knowledge.retrieve_faq(db, bot_profile_id, text)
-        else:
-            result = self.knowledge.retrieve_knowledge_page(db, bot_profile_id, text)
+        result = self._build_answer_result(db, conversation, text, intent)
         if not result:
             return "", [], "none", False
         return result.text, result.evidence, result.source_type, result.structured
+
+    def _retrieve_answer(self, db: Session, bot_profile_id: object, text: str, intent: str) -> tuple[str, list[str], str, bool]:
+        result = self._retrieve_answer_result(db, bot_profile_id, text, intent)
+        if not result:
+            return "", [], "none", False
+        return result.text, result.evidence, result.source_type, result.structured
+
+    def _build_answer_result(self, db: Session, conversation: Conversation, text: str, intent: str) -> RetrievedKnowledge | None:
+        return self._retrieve_answer_result(db, conversation.bot_profile_id, text, intent)
+
+    def _retrieve_answer_result(self, db: Session, bot_profile_id: object, text: str, intent: str) -> RetrievedKnowledge | None:
+        if intent == "faq":
+            return self.knowledge.retrieve_faq(db, bot_profile_id, text)
+        return self.knowledge.retrieve_knowledge_page(db, bot_profile_id, text)
 
     def _record_business_reply_candidate(
         self,
@@ -375,10 +399,7 @@ class ResponseService:
         text: str,
         raw_payload: dict,
         telegram_message_id: str | None,
-        answer: str,
-        evidence: list[str],
-        source_type: str,
-        structured: bool,
+        answer_result: RetrievedKnowledge,
     ) -> tuple[Conversation, PipelineResult]:
         if conversation is None:
             conversation = self.conversations.get_or_create_conversation(
@@ -399,13 +420,14 @@ class ResponseService:
             telegram_message_id=telegram_message_id,
         )
         return conversation, PipelineResult(
-            action="knowledge_reply" if source_type == "knowledge_page" else "template_reply",
-            text=answer,
-            evidence=evidence,
+            action="knowledge_reply" if answer_result.source_type == "knowledge_page" else "template_reply",
+            text=answer_result.text,
+            evidence=answer_result.evidence,
             risk_level="low",
-            intent="knowledge" if source_type == "knowledge_page" else "faq",
-            source_type=source_type,
-            structured=structured,
+            intent="knowledge" if answer_result.source_type == "knowledge_page" else "faq",
+            source_type=answer_result.source_type,
+            structured=answer_result.structured,
+            image_assets=answer_result.image_assets,
         )
 
     @staticmethod
@@ -425,18 +447,24 @@ class ResponseService:
         return configured or DEFAULT_UNANSWERED_FALLBACK_MESSAGE
 
     def _build_followup_answer(self, db: Session, conversation: Conversation, text: str) -> tuple[str, list[str], str, bool]:
-        if db is None or not self._looks_like_followup(text):
+        result = self._build_followup_result(db, conversation, text)
+        if not result:
             return "", [], "none", False
+        return result.text, result.evidence, result.source_type, result.structured
+
+    def _build_followup_result(self, db: Session, conversation: Conversation, text: str) -> RetrievedKnowledge | None:
+        if db is None or not self._looks_like_followup(text):
+            return None
 
         recent_messages = self._get_recent_messages(db, conversation)
         latest_bot_message = next((message for message in recent_messages if message.source == MessageSource.BOT), None)
         previous_customer_message = self._find_previous_customer_message(recent_messages, latest_bot_message)
         if not latest_bot_message or not previous_customer_message:
-            return "", [], "none", False
+            return None
 
         combined_queries = self._build_followup_queries(previous_customer_message.content_text, latest_bot_message.content_text, text)
         if not combined_queries:
-            return "", [], "none", False
+            return None
 
         price_answer = self._build_quantity_price_answer(
             db=db,
@@ -452,14 +480,14 @@ class ResponseService:
             for query in combined_queries:
                 result = self.knowledge.retrieve_faq(db, conversation.bot_profile_id, query)
                 if result and not self._is_same_reply(result.text, latest_bot_message.content_text):
-                    return result.text, result.evidence, result.source_type, result.structured
+                    return result
 
         for query in combined_queries:
             result = self.knowledge.retrieve_knowledge_page(db, conversation.bot_profile_id, query)
             if result and not self._is_same_reply(result.text, latest_bot_message.content_text):
-                return result.text, result.evidence, result.source_type, result.structured
+                return result
 
-        return "", [], "none", False
+        return None
 
     def _build_quantity_price_answer(
         self,
@@ -468,7 +496,7 @@ class ResponseService:
         current_text: str,
         previous_customer_text: str,
         latest_bot_text: str,
-    ) -> tuple[str, list[str], str, bool] | None:
+    ) -> RetrievedKnowledge | None:
         quantity = self._extract_quantity(current_text)
         if not quantity or not self._has_price_context(previous_customer_text, latest_bot_text):
             return None
@@ -489,7 +517,13 @@ class ResponseService:
             if not tiers:
                 continue
             reply = self._render_quantity_price_reply(quantity, tiers)
-            return reply, [*result.evidence, "system:quantity_price_quote"], result.source_type, False
+            return RetrievedKnowledge(
+                text=reply,
+                evidence=[*result.evidence, "system:quantity_price_quote"],
+                source_type=result.source_type,
+                structured=False,
+                image_assets=result.image_assets,
+            )
         return None
 
     def _get_recent_messages(self, db: Session, conversation: Conversation, limit: int = 6) -> list[Message]:

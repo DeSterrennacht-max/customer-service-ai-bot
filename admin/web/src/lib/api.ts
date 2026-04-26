@@ -9,6 +9,7 @@ import {
   FAQEntry,
   FAQUpdatePayload,
   HandoffActionResponse,
+  ImageAsset,
   KnowledgePageCreatePayload,
   KnowledgePage,
   KnowledgePageUpdatePayload,
@@ -53,7 +54,7 @@ async function requestJSON<T>(path: string, init: RequestInit = {}, retryOnUnaut
     ...init,
     headers: {
       Accept: "application/json",
-      ...(init.body ? { "Content-Type": "application/json" } : {}),
+      ...(typeof init.body === "string" ? { "Content-Type": "application/json" } : {}),
       ...(init.headers ?? {}),
       Authorization: `Bearer ${accessToken}`
     },
@@ -134,6 +135,15 @@ export const api = {
   updateKnowledgePage: (id: string, payload: KnowledgePageUpdatePayload) =>
     requestJSON<KnowledgePage>(`/admin/knowledge-pages/${id}`, { method: "PATCH", body: JSON.stringify(payload) }),
   deleteKnowledgePage: (id: string) => requestJSON<void>(`/admin/knowledge-pages/${id}`, { method: "DELETE" }),
+  uploadImage: (botProfileId: string, resourceType: "faq" | "knowledge_page", file: File) => {
+    const formData = new FormData();
+    formData.set("bot_profile_id", botProfileId);
+    formData.set("resource_type", resourceType);
+    formData.set("file", file);
+    return requestJSON<ImageAsset>("/admin/media/images", { method: "POST", body: formData });
+  },
+  deleteImage: (objectKey: string) =>
+    requestJSON<void>("/admin/media/images", { method: "DELETE", body: JSON.stringify({ object_key: objectKey }) }),
   styleProfile: (botProfileId?: string | null) => requestJSON<StyleProfile>(withQuery("/admin/style-profile", { bot_profile_id: botProfileId })),
   updateStyleProfile: (payload: StyleProfileUpdatePayload) =>
     requestJSON<StyleProfile>(withQuery("/admin/style-profile", { bot_profile_id: payload.bot_profile_id ?? undefined }), {

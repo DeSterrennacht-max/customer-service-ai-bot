@@ -13,7 +13,7 @@ from backend.api.app.core.security import get_password_hash
 from backend.api.app.db.base import Base
 from backend.api.app.db.models.entities import BotProfile, StyleProfile, Tenant, User, UserRole
 from backend.api.app.db.session import SessionLocal, engine
-from backend.api.app.routers import auth, bot_profiles, conversations, faqs, knowledge_pages, style_profiles, telegram, tenants
+from backend.api.app.routers import auth, bot_profiles, conversations, faqs, knowledge_pages, media, style_profiles, telegram, tenants
 
 configure_logging()
 settings = get_settings()
@@ -33,6 +33,7 @@ app.include_router(bot_profiles.router)
 app.include_router(tenants.router)
 app.include_router(faqs.router)
 app.include_router(knowledge_pages.router)
+app.include_router(media.router)
 app.include_router(style_profiles.router)
 
 

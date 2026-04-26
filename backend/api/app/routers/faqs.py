@@ -12,9 +12,22 @@ from backend.api.app.db.session import get_db
 from backend.api.app.dependencies import ensure_tenant_access, get_accessible_bot_profile, get_current_user, is_super_admin
 from backend.api.app.schemas.content import FAQCreate, FAQResponse, FAQUpdate
 from backend.api.app.services.audit_service import AuditService
+from backend.api.app.services.image_storage_service import ImageStorageError, ImageValidationError, R2ImageStorageService
 
 router = APIRouter(prefix="/admin/faqs", tags=["faqs"])
 audit_service = AuditService()
+image_storage_service = R2ImageStorageService()
+
+
+def raise_image_delete_error(exc: Exception) -> None:
+    raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+def validate_image_assets_or_400(assets: object, tenant_id: UUID) -> list[dict[str, object]]:
+    try:
+        return image_storage_service.validate_assets_owned_by_tenant(assets, tenant_id)
+    except ImageValidationError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("", response_model=list[FAQResponse])
@@ -43,7 +56,9 @@ def create_faq(
     ensure_tenant_access(user, tenant_id)
     if tenant_id != bot_profile.tenant_id:
         raise HTTPException(status_code=400, detail="Tenant and bot profile mismatch")
-    faq = FAQEntry(tenant_id=tenant_id, **payload.model_dump(exclude={"tenant_id"}))
+    payload_data = payload.model_dump(exclude={"tenant_id"})
+    payload_data["image_assets_json"] = validate_image_assets_or_400(payload_data.get("image_assets_json"), tenant_id)
+    faq = FAQEntry(tenant_id=tenant_id, **payload_data)
     db.add(faq)
     audit_service.record(
         db=db,
@@ -70,7 +85,14 @@ def update_faq(
     if not faq:
         raise HTTPException(status_code=404, detail="FAQ not found")
     ensure_tenant_access(user, faq.tenant_id)
-    for key, value in payload.model_dump(exclude_unset=True).items():
+    payload_data = payload.model_dump(exclude_unset=True)
+    if "image_assets_json" in payload_data:
+        payload_data["image_assets_json"] = validate_image_assets_or_400(payload_data.get("image_assets_json"), faq.tenant_id)
+        try:
+            image_storage_service.delete_removed_image_assets(faq.image_assets_json, payload_data["image_assets_json"])
+        except (ImageStorageError, ImageValidationError) as exc:
+            raise_image_delete_error(exc)
+    for key, value in payload_data.items():
         setattr(faq, key, value)
     audit_service.record(
         db=db,
@@ -80,7 +102,7 @@ def update_faq(
         action="faq.updated",
         target_type="faq_entry",
         target_id=str(faq.id),
-        detail_json=payload.model_dump(exclude_unset=True),
+        detail_json=payload_data,
     )
     db.commit()
     db.refresh(faq)
@@ -97,6 +119,10 @@ def delete_faq(
     if not faq:
         raise HTTPException(status_code=404, detail="FAQ not found")
     ensure_tenant_access(user, faq.tenant_id)
+    try:
+        image_storage_service.delete_image_assets(faq.image_assets_json)
+    except (ImageStorageError, ImageValidationError) as exc:
+        raise_image_delete_error(exc)
     audit_service.record(
         db=db,
         tenant_id=str(faq.tenant_id),

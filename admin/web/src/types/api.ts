@@ -103,6 +103,7 @@ export interface FAQEntry {
   tenant_id: string;
   question_patterns_json: string[];
   canonical_answer: string;
+  image_assets_json: ImageAsset[];
   answer_style_notes?: string | null;
   category?: string | null;
   product_scope?: string | null;
@@ -118,6 +119,7 @@ export interface FAQCreatePayload {
   tenant_id?: string | null;
   question_patterns_json: string[];
   canonical_answer: string;
+  image_assets_json: ImageAsset[];
   answer_style_notes?: string | null;
   category?: string | null;
   product_scope?: string | null;
@@ -129,6 +131,7 @@ export interface FAQCreatePayload {
 export interface FAQUpdatePayload {
   question_patterns_json?: string[];
   canonical_answer?: string;
+  image_assets_json?: ImageAsset[];
   answer_style_notes?: string | null;
   category?: string | null;
   product_scope?: string | null;
@@ -143,6 +146,7 @@ export interface KnowledgePage {
   tenant_id: string;
   title: string;
   body_markdown: string;
+  image_assets_json: ImageAsset[];
   tags_json: string[];
   product_scope?: string | null;
   risk_level: RiskLevel;
@@ -156,6 +160,7 @@ export interface KnowledgePageCreatePayload {
   tenant_id?: string | null;
   title: string;
   body_markdown: string;
+  image_assets_json: ImageAsset[];
   tags_json: string[];
   product_scope?: string | null;
   risk_level: RiskLevel;
@@ -165,10 +170,19 @@ export interface KnowledgePageCreatePayload {
 export interface KnowledgePageUpdatePayload {
   title?: string;
   body_markdown?: string;
+  image_assets_json?: ImageAsset[];
   tags_json?: string[];
   product_scope?: string | null;
   risk_level?: RiskLevel;
   status?: string;
+}
+
+export interface ImageAsset {
+  url: string;
+  object_key: string;
+  filename: string;
+  content_type: string;
+  size_bytes: number;
 }
 
 export interface StyleProfile {

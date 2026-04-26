@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 from math import ceil
 from uuid import UUID
@@ -10,6 +10,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from backend.api.app.db.models.entities import FAQEntry, KnowledgeChunk, KnowledgePage
+from backend.api.app.services.image_storage_service import normalize_image_assets
 
 MARKDOWN_LINK_PATTERN = re.compile(r"\[([^\]]+)\]\((https?://[^)]+)\)")
 ENGLISH_TOKEN_PATTERN = re.compile(r"[a-z0-9]+")
@@ -24,6 +25,7 @@ class RetrievedKnowledge:
     evidence: list[str]
     source_type: str
     structured: bool = False
+    image_assets: list[dict[str, object]] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -261,6 +263,7 @@ class KnowledgeService:
                 evidence=[f"faq:{faq.id}"],
                 source_type="faq",
                 structured=False,
+                image_assets=normalize_image_assets(faq.image_assets_json),
             )
         return None
 
@@ -299,4 +302,5 @@ class KnowledgeService:
             evidence=evidence,
             source_type="knowledge_page",
             structured=True,
+            image_assets=normalize_image_assets(best_page.image_assets_json),
         )
