@@ -1015,7 +1015,7 @@ def test_followup_message_reuses_recent_context_before_generic_knowledge_lookup(
     assert knowledge_queries == ["价格是多少 10个坐席"]
 
 
-def test_quantity_price_followup_calculates_totals_instead_of_repeating_generic_faq() -> None:
+def test_quantity_price_followup_does_not_calculate_totals() -> None:
     service = ResponseService()
     conversation = SimpleNamespace(
         bot_profile_id=uuid4(),
@@ -1024,24 +1024,22 @@ def test_quantity_price_followup_calculates_totals_instead_of_repeating_generic_
         telegram_chat_id="123456",
         id=uuid4(),
     )
+    ticket = SimpleNamespace(id=uuid4())
     current_customer_id = uuid4()
     last_bot_id = uuid4()
     previous_customer_id = uuid4()
     generic_answer = "007chat 按坐席按年收费。标准版和高级版价格不同，如果您告诉我需要几个坐席，我可以继续帮您确认更合适的方案。"
-    pricing_result = RetrievedKnowledge(
-        text="标准版是 499/坐席/年，优惠价 400 USDT；高级版是 799/坐席/年，优惠价 700 USDT。如需我也可以继续帮您对比两个版本。",
-        evidence=["faq:pricing-detail"],
-        source_type="faq",
-        structured=False,
-    )
 
     service.conversations.record_message = lambda *args, **kwargs: None
     service.conversations.get_bot_profile = lambda db, bot_profile_id: SimpleNamespace(
         high_risk_keywords_json=["人工"],
         sensitive_keywords_json=["诈骗"],
         telegram_bot_token="bot-token",
+        support_group_chat_id="-100123456",
     )
     service.rules.route = lambda text, bot_profile=None: None
+    service.handoff.create_ticket = lambda *args, **kwargs: ticket
+    service.handoff.notify_support_group = lambda *args, **kwargs: None
     service._get_recent_messages = lambda db, conversation, limit=6: [
         SimpleNamespace(id=current_customer_id, source=MessageSource.CUSTOMER, content_text="2位坐席"),
         SimpleNamespace(id=last_bot_id, source=MessageSource.BOT, content_text=generic_answer, intent="faq"),
@@ -1049,34 +1047,38 @@ def test_quantity_price_followup_calculates_totals_instead_of_repeating_generic_
     ]
 
     faq_queries: list[str] = []
+    knowledge_queries: list[str] = []
 
     def fake_retrieve_faq(db, bot_profile_id, text):
         faq_queries.append(text)
-        if text == "2位坐席":
-            pytest.fail("短追问不应该先按当前消息直接查 FAQ")
+        if text in {"标准版多少钱", "高级版多少钱", "套餐价格分别是多少", "标准版价格", "高级版价格"}:
+            pytest.fail("不应再查询硬编码价格事实来做坐席总价计算")
         if text in {"价格多少 2位坐席", f"{generic_answer} 2位坐席"}:
             return RetrievedKnowledge(text=generic_answer, evidence=["faq:generic-price"], source_type="faq")
-        if text == "标准版多少钱":
-            return pricing_result
         return None
 
     service.knowledge.retrieve_faq = fake_retrieve_faq
-    service.knowledge.retrieve_knowledge_page = lambda *args, **kwargs: pytest.fail("价格明细 FAQ 足够时不应查知识页")
+
+    def fake_retrieve_knowledge(db, bot_profile_id, text):
+        knowledge_queries.append(text)
+        return None
+
+    service.knowledge.retrieve_knowledge_page = fake_retrieve_knowledge
 
     result = service.handle_customer_message(object(), conversation, "2位坐席", {}, None)
 
-    assert result.action == "template_reply"
-    assert result.intent == "faq"
-    assert "按你说的 2 位坐席" in result.text
-    assert "标准版：499/坐席/年，合计 998 元/年；优惠价合计 800 USDT" in result.text
-    assert "高级版：799/坐席/年，合计 1598 元/年；优惠价合计 1400 USDT" in result.text
-    assert result.evidence == ["faq:pricing-detail", "system:quantity_price_quote"]
-    assert "标准版多少钱" in faq_queries
+    assert result.action == "handoff"
+    assert result.intent == "unanswered"
+    assert "按你说的 2 位坐席" not in result.text
+    assert "system:quantity_price_quote" not in result.evidence
+    assert "标准版多少钱" not in faq_queries
+    assert "2位坐席" in faq_queries
+    assert "价格多少 2位坐席" in knowledge_queries
 
 
-def test_followup_quantity_accepts_common_chinese_numbers() -> None:
-    assert ResponseService._extract_quantity("两位坐席") == 2
-    assert ResponseService._extract_quantity("十个账号") == 10
+def test_followup_quantity_words_still_count_as_short_followups() -> None:
+    assert ResponseService._looks_like_followup("两位坐席") is True
+    assert ResponseService._looks_like_followup("十个账号") is True
 
 
 def test_handoff_uses_conversation_bot_profile_group_instead_of_default_bot() -> None:

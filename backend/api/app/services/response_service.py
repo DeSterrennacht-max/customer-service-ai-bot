@@ -21,23 +21,8 @@ from backend.api.app.services.telegram_service import TelegramService
 
 logger = logging.getLogger(__name__)
 
-CHINESE_NUMBER_MAP = {
-    "一": 1,
-    "二": 2,
-    "两": 2,
-    "三": 3,
-    "四": 4,
-    "五": 5,
-    "六": 6,
-    "七": 7,
-    "八": 8,
-    "九": 9,
-    "十": 10,
-}
 FOLLOWUP_QUANTITY_PATTERN = re.compile(r"(\d+|[一二两三四五六七八九十])\s*(个|位|席|坐席|人|账号|用户|台)?")
 FOLLOWUP_HINT_WORDS = ("这个", "那个", "这样", "这种", "那种", "继续", "然后", "上面", "刚才")
-PRICE_CONTEXT_WORDS = ("价格", "价钱", "多少钱", "收费", "费用", "套餐", "坐席", "标准版", "高级版")
-PRICING_FACT_QUERIES = ("标准版多少钱", "高级版多少钱", "套餐价格分别是多少", "标准版价格", "高级版价格")
 UNANSWERED_HANDOFF_NOTICE = DEFAULT_UNANSWERED_FALLBACK_MESSAGE
 
 
@@ -505,16 +490,6 @@ class ResponseService:
         if not combined_queries:
             return None
 
-        price_answer = self._build_quantity_price_answer(
-            db=db,
-            conversation=conversation,
-            current_text=text,
-            previous_customer_text=previous_customer_message.content_text,
-            latest_bot_text=latest_bot_message.content_text,
-        )
-        if price_answer:
-            return price_answer
-
         if latest_bot_message.intent == "faq":
             for query in combined_queries:
                 result = self.knowledge.retrieve_faq(db, conversation.bot_profile_id, query)
@@ -526,43 +501,6 @@ class ResponseService:
             if result and not self._is_same_reply(result.text, latest_bot_message.content_text):
                 return result
 
-        return None
-
-    def _build_quantity_price_answer(
-        self,
-        db: Session,
-        conversation: Conversation,
-        current_text: str,
-        previous_customer_text: str,
-        latest_bot_text: str,
-    ) -> RetrievedKnowledge | None:
-        quantity = self._extract_quantity(current_text)
-        if not quantity or not self._has_price_context(previous_customer_text, latest_bot_text):
-            return None
-
-        fact_queries = [
-            *self._build_followup_queries(previous_customer_text, latest_bot_text, current_text),
-            *PRICING_FACT_QUERIES,
-        ]
-        seen_queries: set[str] = set()
-        for query in fact_queries:
-            if query in seen_queries:
-                continue
-            seen_queries.add(query)
-            result = self.knowledge.retrieve_faq(db, conversation.bot_profile_id, query)
-            if not result:
-                continue
-            tiers = self._parse_per_seat_pricing(result.text)
-            if not tiers:
-                continue
-            reply = self._render_quantity_price_reply(quantity, tiers)
-            return RetrievedKnowledge(
-                text=reply,
-                evidence=[*result.evidence, "system:quantity_price_quote"],
-                source_type=result.source_type,
-                structured=False,
-                image_assets=result.image_assets,
-            )
         return None
 
     def _get_recent_messages(self, db: Session, conversation: Conversation, limit: int = 6) -> list[Message]:
@@ -599,65 +537,9 @@ class ResponseService:
         return queries
 
     @staticmethod
-    def _extract_quantity(text: str) -> int | None:
-        match = FOLLOWUP_QUANTITY_PATTERN.search(text.strip())
-        if not match:
-            return None
-        raw_quantity = match.group(1)
-        quantity = int(raw_quantity) if raw_quantity.isdigit() else CHINESE_NUMBER_MAP.get(raw_quantity, 0)
-        return quantity if quantity > 0 else None
-
-    @staticmethod
-    def _has_price_context(*texts: str) -> bool:
-        combined = " ".join(texts)
-        return any(word in combined for word in PRICE_CONTEXT_WORDS)
-
-    @staticmethod
     def _is_same_reply(left: str, right: str) -> bool:
         normalize = lambda value: re.sub(r"\s+", "", value or "")
         return bool(left and right and normalize(left) == normalize(right))
-
-    @staticmethod
-    def _parse_per_seat_pricing(text: str) -> list[dict[str, object]]:
-        tiers: list[dict[str, object]] = []
-        for name in ("标准版", "高级版"):
-            segment_match = re.search(fr"{name}[^。；;\n]*", text)
-            if not segment_match:
-                continue
-            segment = segment_match.group(0)
-            seat_price_match = re.search(r"(\d+(?:\.\d+)?)\s*(?:元|USDT)?\s*/\s*坐席\s*/\s*年", segment)
-            if not seat_price_match:
-                continue
-            promo_match = re.search(r"优惠价\s*(\d+(?:\.\d+)?)\s*([A-Za-z]+|元)?", segment)
-            tiers.append(
-                {
-                    "name": name,
-                    "seat_price": float(seat_price_match.group(1)),
-                    "seat_currency": "元",
-                    "promo_price": float(promo_match.group(1)) if promo_match else None,
-                    "promo_currency": promo_match.group(2) if promo_match and promo_match.group(2) else "USDT",
-                }
-            )
-        return tiers
-
-    @classmethod
-    def _render_quantity_price_reply(cls, quantity: int, tiers: list[dict[str, object]]) -> str:
-        lines = [f"按你说的 {quantity} 位坐席，按年费用可以这样算："]
-        for tier in tiers:
-            seat_price = float(tier["seat_price"])
-            total = seat_price * quantity
-            line = f"- {tier['name']}：{cls._format_amount(seat_price)}/坐席/年，合计 {cls._format_amount(total)} 元/年"
-            promo_price = tier.get("promo_price")
-            if promo_price is not None:
-                promo_total = float(promo_price) * quantity
-                line += f"；优惠价合计 {cls._format_amount(promo_total)} {tier['promo_currency']}"
-            lines.append(line)
-        lines.append("如果你还没确定版本，可以先告诉我你需要标准版还是高级版，我再按对应版本继续确认。")
-        return "\n".join(lines)
-
-    @staticmethod
-    def _format_amount(value: float) -> str:
-        return str(int(value)) if value.is_integer() else f"{value:.2f}".rstrip("0").rstrip(".")
 
     @staticmethod
     def _looks_like_followup(text: str) -> bool:
