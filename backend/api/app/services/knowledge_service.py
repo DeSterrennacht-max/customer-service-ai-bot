@@ -9,7 +9,7 @@ from uuid import UUID
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from backend.api.app.db.models.entities import FAQEntry, KnowledgeChunk, KnowledgePage
+from backend.api.app.db.models.entities import FAQEntry, KnowledgeChunk, KnowledgePage, RiskLevel
 from backend.api.app.services.image_storage_service import normalize_image_assets
 
 MARKDOWN_LINK_PATTERN = re.compile(r"\[([^\]]+)\]\((https?://[^)]+)\)")
@@ -25,6 +25,7 @@ class RetrievedKnowledge:
     evidence: list[str]
     source_type: str
     structured: bool = False
+    risk_level: RiskLevel = RiskLevel.LOW
     image_assets: list[dict[str, object]] = field(default_factory=list)
 
 
@@ -264,6 +265,7 @@ class KnowledgeService:
                 source_type="faq",
                 structured=False,
                 image_assets=normalize_image_assets(faq.image_assets_json),
+                risk_level=RiskLevel(getattr(faq, "risk_level", None) or RiskLevel.LOW),
             )
         return None
 
@@ -303,4 +305,5 @@ class KnowledgeService:
             source_type="knowledge_page",
             structured=True,
             image_assets=normalize_image_assets(best_page.image_assets_json),
+            risk_level=RiskLevel(getattr(best_page, "risk_level", None) or RiskLevel.LOW),
         )

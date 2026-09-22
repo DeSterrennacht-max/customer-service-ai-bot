@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime, timezone
 from enum import StrEnum
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy import Enum as SqlEnum
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -46,6 +46,10 @@ class DeliveryStatus(StrEnum):
     PROCESSED = "processed"
     SENT = "sent"
     FAILED = "failed"
+    PENDING = "pending"
+    PARTIAL = "partial"
+    UNCERTAIN = "uncertain"
+    CANCELLED = "cancelled"
 
 
 class UserRole(StrEnum):
@@ -143,6 +147,7 @@ class User(Base):
     login_username: Mapped[str] = mapped_column(String(255), unique=True, index=True)
     email: Mapped[str | None] = mapped_column(String(255), unique=True, nullable=True)
     password_hash: Mapped[str] = mapped_column(String(255))
+    auth_version: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
     role: Mapped[UserRole] = mapped_column(SqlEnum(UserRole, native_enum=False, length=32))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
@@ -184,6 +189,7 @@ class Message(Base):
     source: Mapped[MessageSource] = mapped_column(SqlEnum(MessageSource, native_enum=False))
     channel: Mapped[MessageChannel] = mapped_column(SqlEnum(MessageChannel, native_enum=False))
     telegram_message_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    telegram_chat_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     reply_to_message_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     content_text: Mapped[str] = mapped_column(Text, default="")
     raw_payload_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
@@ -193,6 +199,7 @@ class Message(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     conversation: Mapped["Conversation"] = relationship(back_populates="messages")
+    deliveries: Mapped[list["OutboundDelivery"]] = relationship(order_by="OutboundDelivery.sequence", passive_deletes=True)
 
 
 class FAQEntry(Base):
@@ -304,4 +311,64 @@ class AuditLog(Base):
     target_type: Mapped[str] = mapped_column(String(255))
     target_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     detail_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class AuthSession(Base):
+    __tablename__ = "auth_sessions"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    refresh_token_hash: Mapped[str] = mapped_column(String(64))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class LoginThrottle(Base):
+    __tablename__ = "login_throttles"
+
+    key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    attempts: Mapped[int] = mapped_column(Integer)
+    window_start: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class TelegramUpdate(Base):
+    __tablename__ = "telegram_updates"
+    __table_args__ = (
+        UniqueConstraint("bot_profile_id", "update_id", name="uq_telegram_update_bot_update"),
+        Index("ix_telegram_updates_pending", "status", "next_attempt_at", "created_at"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    bot_profile_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("bot_profiles.id", ondelete="CASCADE"), index=True)
+    update_id: Mapped[int] = mapped_column(BigInteger)
+    payload_json: Mapped[dict] = mapped_column(JSONB)
+    status: Mapped[str] = mapped_column(String(16), default="pending")
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    next_attempt_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    last_error: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class OutboundDelivery(Base):
+    __tablename__ = "outbound_deliveries"
+    __table_args__ = (Index("ix_outbound_deliveries_pending", "status", "next_attempt_at", "created_at"),)
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    bot_profile_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("bot_profiles.id", ondelete="CASCADE"), index=True)
+    message_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("messages.id", ondelete="CASCADE"), index=True)
+    chat_id: Mapped[str] = mapped_column(String(255))
+    business_connection_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    kind: Mapped[str] = mapped_column(String(16))
+    payload_json: Mapped[dict] = mapped_column(JSONB)
+    automatic: Mapped[bool] = mapped_column(Boolean, default=False)
+    sequence: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(String(16), default="pending")
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    next_attempt_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    telegram_message_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    last_error: Mapped[str | None] = mapped_column(String(255), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

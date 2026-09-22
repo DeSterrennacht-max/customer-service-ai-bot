@@ -12,4 +12,7 @@ def slugify_login_username(value: str, fallback: str = "tenant_admin") -> str:
 
 def generate_temporary_password(length: int = 12) -> str:
     alphabet = string.ascii_letters + string.digits
-    return "".join(secrets.choice(alphabet) for _ in range(length))
+    characters = [secrets.choice(string.ascii_letters), secrets.choice(string.digits)]
+    characters.extend(secrets.choice(alphabet) for _ in range(max(12, length) - 2))
+    secrets.SystemRandom().shuffle(characters)
+    return "".join(characters)

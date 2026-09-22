@@ -9,7 +9,14 @@ import pytest
 from fastapi import HTTPException
 
 from backend.api.app.routers import telegram as telegram_router
-from backend.api.app.routers.telegram import conversation_service, process_telegram_webhook, resolve_webhook_bot_profile
+from backend.api.app.routers.telegram import conversation_service, resolve_webhook_bot_profile
+from backend.api.app.schemas.telegram import TelegramWebhookPayload
+
+
+async def process_received_payload(request, db, x_telegram_bot_api_secret_token=None, bot_identifier=None):
+    payload = TelegramWebhookPayload.model_validate(await request.json())
+    bot = telegram_router.resolve_webhook_bot_profile(db, bot_identifier)
+    return telegram_router.process_received_update(db, payload, bot)
 
 
 class FakeRequest:
@@ -117,7 +124,7 @@ def test_process_business_connection_update_upserts_status(monkeypatch: pytest.M
     db = FakeDb()
 
     result = asyncio.run(
-        process_telegram_webhook(
+        process_received_payload(
             request=FakeRequest(
                 {
                     "update_id": 1,
@@ -145,7 +152,7 @@ def test_process_business_connection_update_upserts_status(monkeypatch: pytest.M
     }
     assert captured["bot_profile"] is profile
     assert captured["payload"]["rights"]["can_reply"] is True
-    assert db.commits == 1
+    assert db.commits == 0
 
 
 def test_process_regular_message_preserves_plain_bot_path(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -168,7 +175,7 @@ def test_process_regular_message_preserves_plain_bot_path(monkeypatch: pytest.Mo
     db = FakeDb()
 
     result = asyncio.run(
-        process_telegram_webhook(
+        process_received_payload(
             request=FakeRequest(
                 {
                     "update_id": 2,
@@ -188,7 +195,7 @@ def test_process_regular_message_preserves_plain_bot_path(monkeypatch: pytest.Mo
 
     assert result == {"status": "ok", "action": "template_reply", "sent_text": "您好"}
     assert captured["conversation_kwargs"]["telegram_business_connection_id"] is None
-    assert db.commits == 1
+    assert db.commits == 0
 
 
 def test_process_business_message_reuses_business_response_pipeline(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -219,7 +226,7 @@ def test_process_business_message_reuses_business_response_pipeline(monkeypatch:
     db = FakeDb()
 
     result = asyncio.run(
-        process_telegram_webhook(
+        process_received_payload(
             request=FakeRequest(
                 {
                     "update_id": 3,
@@ -241,7 +248,7 @@ def test_process_business_message_reuses_business_response_pipeline(monkeypatch:
     assert result == {"status": "ok", "action": "template_reply", "sent_text": "Business reply"}
     assert captured["conversation_kwargs"]["telegram_business_connection_id"] == "business-connection-1"
     assert captured["pipeline"]["business_connection_id"] == "business-connection-1"
-    assert db.commits == 1
+    assert db.commits == 0
 
 
 def test_process_business_message_ignores_miss_without_dispatch(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -264,7 +271,7 @@ def test_process_business_message_ignores_miss_without_dispatch(monkeypatch: pyt
     db = FakeDb()
 
     result = asyncio.run(
-        process_telegram_webhook(
+        process_received_payload(
             request=FakeRequest(
                 {
                     "update_id": 31,
@@ -284,7 +291,7 @@ def test_process_business_message_ignores_miss_without_dispatch(monkeypatch: pyt
     )
 
     assert result == {"status": "ignored", "action": "ignored", "reason": "unanswered"}
-    assert db.commits == 1
+    assert db.commits == 0
 
 
 def test_process_business_message_ignores_without_reply_permission(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -311,7 +318,7 @@ def test_process_business_message_ignores_without_reply_permission(monkeypatch: 
     db = FakeDb()
 
     result = asyncio.run(
-        process_telegram_webhook(
+        process_received_payload(
             request=FakeRequest(
                 {
                     "update_id": 4,
@@ -331,7 +338,7 @@ def test_process_business_message_ignores_without_reply_permission(monkeypatch: 
     )
 
     assert result == {"status": "ignored", "reason": "business_connection_cannot_reply"}
-    assert db.commits == 1
+    assert db.commits == 0
 
 
 def test_edited_business_message_duplicate_does_not_reply(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -350,7 +357,7 @@ def test_edited_business_message_duplicate_does_not_reply(monkeypatch: pytest.Mo
     db = FakeDb(scalar_results=[SimpleNamespace(id=uuid4())])
 
     result = asyncio.run(
-        process_telegram_webhook(
+        process_received_payload(
             request=FakeRequest(
                 {
                     "update_id": 5,

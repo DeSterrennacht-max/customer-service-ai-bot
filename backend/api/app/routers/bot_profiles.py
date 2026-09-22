@@ -232,6 +232,8 @@ def update_bot_profile(
         updates["email_auto_reply_message"] = normalize_email_auto_reply_message(
             updates.get("email_auto_reply_message")
         )
+    if "tenant_id" in updates and updates["tenant_id"] != bot_profile.tenant_id:
+        raise HTTPException(status_code=409, detail="现有机器人不支持直接变更所属租户，请在目标租户中新建机器人")
     if "tenant_id" in updates:
         ensure_tenant_access(user, updates["tenant_id"])
         tenant = db.get(Tenant, updates["tenant_id"])

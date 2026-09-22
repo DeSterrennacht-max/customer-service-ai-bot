@@ -2,7 +2,7 @@ name: customer-service-ai-bot
 
 services:
   db:
-    image: postgres:16
+    image: postgres:16.15
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-customer_service_bot}
@@ -12,7 +12,7 @@ services:
       - postgres-data:/var/lib/postgresql/data
 
   redis:
-    image: redis:7
+    image: redis:7.4.11
     restart: unless-stopped
     volumes:
       - redis-data:/data
@@ -45,6 +45,38 @@ services:
       - db
       - redis
 
+  beat:
+    build:
+      context: ..
+      dockerfile: infra/docker/worker.Dockerfile
+    restart: unless-stopped
+    env_file:
+      - ./env/production.env
+    environment:
+      APP_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-customer_service_bot}:${POSTGRES_PASSWORD:-change-this-db-password}@db:5432/${POSTGRES_DB:-customer_service_bot}
+      APP_REDIS_URL: ${APP_REDIS_URL:-redis://redis:6379/0}
+    command: ["celery", "-A", "backend.worker.app.celery_app:celery_app", "beat", "--loglevel=INFO", "--schedule=/var/lib/celery/celerybeat-schedule"]
+    volumes:
+      - celery-beat-data:/var/lib/celery
+    depends_on:
+      - db
+      - redis
+
+  dispatcher:
+    build:
+      context: ..
+      dockerfile: infra/docker/worker.Dockerfile
+    restart: unless-stopped
+    env_file:
+      - ./env/production.env
+    environment:
+      APP_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-customer_service_bot}:${POSTGRES_PASSWORD:-change-this-db-password}@db:5432/${POSTGRES_DB:-customer_service_bot}
+      APP_REDIS_URL: ${APP_REDIS_URL:-redis://redis:6379/0}
+    command: ["celery", "-A", "backend.worker.app.celery_app:celery_app", "worker", "--loglevel=INFO", "--concurrency=1", "-Q", "customer-service-control"]
+    depends_on:
+      - db
+      - redis
+
   web:
     build:
       context: ..
@@ -52,8 +84,6 @@ services:
       args:
         NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-}
     restart: unless-stopped
-    env_file:
-      - ./env/production.env
     environment:
       NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-}
       NODE_ENV: production
@@ -61,7 +91,7 @@ services:
       - api
 
   nginx:
-    image: nginx:1.27-alpine
+    image: nginx:1.30.5-alpine
     restart: unless-stopped
     depends_on:
       - api
@@ -74,3 +104,4 @@ services:
 volumes:
   postgres-data:
   redis-data:
+  celery-beat-data:

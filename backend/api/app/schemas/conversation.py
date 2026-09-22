@@ -9,6 +9,19 @@ from backend.api.app.db.models.entities import ConversationStatus, DeliveryStatu
 from backend.api.app.schemas.common import BaseResponse
 
 
+class DeliveryResponse(BaseModel):
+    model_config = {"from_attributes": True}
+    id: UUID
+    kind: str
+    status: str
+    attempts: int
+    last_error: str | None = None
+
+
+class RetryDeliveryRequest(BaseModel):
+    confirm_uncertain: bool = False
+
+
 class MessageResponse(BaseResponse):
     tenant_id: UUID
     conversation_id: UUID
@@ -20,6 +33,7 @@ class MessageResponse(BaseResponse):
     intent: str | None = None
     risk_level: RiskLevel
     delivery_status: DeliveryStatus
+    deliveries: list[DeliveryResponse] = []
 
 
 class ConversationResponse(BaseResponse):

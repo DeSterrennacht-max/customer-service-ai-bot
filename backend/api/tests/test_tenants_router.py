@@ -17,6 +17,7 @@ class FakeSession:
     def __init__(self, tenant: object | None, admin: object | None = None) -> None:
         self.tenant = tenant
         self.admin = admin
+        if admin: admin.auth_version = 1
         self.committed = False
         self.refreshed = False
 
@@ -38,10 +39,12 @@ class FakeSession:
             self.admin.id = uuid4()
             self.admin.created_at = now
 
+    def execute(self, statement): pass
+
     def commit(self) -> None:
         self.committed = True
 
-    def refresh(self, tenant: object) -> None:
+    def refresh(self, tenant: object, **kwargs) -> None:
         self.refreshed = True
         self.tenant = tenant
 

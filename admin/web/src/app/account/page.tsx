@@ -4,7 +4,7 @@ import { FormEvent, useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 
 import { Panel } from "@/components/panel";
-import { AuthError } from "@/lib/auth";
+import { AuthError, clearTokens } from "@/lib/auth";
 import { api } from "@/lib/api";
 import { CurrentUser } from "@/types/api";
 
@@ -82,8 +82,8 @@ export default function AccountPage() {
           current_password: currentPassword,
           new_password: newPassword
         });
-        setMessage("密码已更新。下次登录请使用新密码。");
-        resetForm();
+        clearTokens();
+        router.replace("/login?passwordChanged=1");
       } catch (submitError) {
         if (submitError instanceof AuthError) {
           router.replace("/login");
@@ -113,7 +113,7 @@ export default function AccountPage() {
         ) : null}
       </Panel>
 
-      <Panel title="修改密码" description="请输入当前密码，再设置新的登录密码。系统不会允许你在这里修改用户名。">
+      <Panel title="修改密码" description="新密码至少 12 个字符，包含字母和数字。修改成功后所有设备需重新登录。">
         <form className="stack" onSubmit={handleSubmit}>
           <label>
             当前密码
@@ -121,7 +121,7 @@ export default function AccountPage() {
           </label>
           <label>
             新密码
-            <input type="password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} />
+            <input type="password" minLength={12} autoComplete="new-password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} />
           </label>
           <label>
             再输入一次新密码

@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from backend.api.app.core.account_utils import generate_temporary_password
 from backend.api.app.core.security import get_password_hash
+from backend.api.app.services.auth_session_service import revoke_all_sessions
 from backend.api.app.db.models.entities import Tenant
 from backend.api.app.db.session import get_db
 from backend.api.app.dependencies import get_current_user, is_super_admin
@@ -172,8 +173,10 @@ def reset_tenant_admin_password(
     if not admin:
         raise HTTPException(status_code=404, detail="Tenant admin not found")
 
+    db.refresh(admin, with_for_update=True)
     temporary_password = generate_temporary_password()
     admin.password_hash = get_password_hash(temporary_password)
+    revoke_all_sessions(db, admin)
     db.add(admin)
     db.commit()
 

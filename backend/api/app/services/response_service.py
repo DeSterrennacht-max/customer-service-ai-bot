@@ -1,9 +1,7 @@
 from __future__ import annotations
 
 import logging
-import random
 import re
-import time
 from dataclasses import dataclass, field
 
 from sqlalchemy import select
@@ -90,56 +88,17 @@ class ResponseService:
         if followup_first:
             answer_result = self._build_followup_result(db, conversation, text)
             if answer_result:
-                return PipelineResult(
-                    action="knowledge_reply" if answer_result.source_type == "knowledge_page" else "template_reply",
-                    text=answer_result.text,
-                    evidence=answer_result.evidence,
-                    risk_level="low",
-                    intent="knowledge" if answer_result.source_type == "knowledge_page" else "faq",
-                    source_type=answer_result.source_type,
-                    structured=answer_result.structured,
-                    image_assets=answer_result.image_assets,
-                )
-
+                return self._reply_or_handoff(db, conversation, text, answer_result)
         answer_result = self._build_answer_result(db, conversation, text, "faq")
         if answer_result:
-            return PipelineResult(
-                action="template_reply",
-                text=answer_result.text,
-                evidence=answer_result.evidence,
-                risk_level="low",
-                intent="faq",
-                source_type=answer_result.source_type,
-                structured=answer_result.structured,
-                image_assets=answer_result.image_assets,
-            )
-
+            return self._reply_or_handoff(db, conversation, text, answer_result)
         if not followup_first:
             answer_result = self._build_followup_result(db, conversation, text)
             if answer_result:
-                return PipelineResult(
-                    action="knowledge_reply" if answer_result.source_type == "knowledge_page" else "template_reply",
-                    text=answer_result.text,
-                    evidence=answer_result.evidence,
-                    risk_level="low",
-                    intent="knowledge" if answer_result.source_type == "knowledge_page" else "faq",
-                    source_type=answer_result.source_type,
-                    structured=answer_result.structured,
-                    image_assets=answer_result.image_assets,
-                )
-
+                return self._reply_or_handoff(db, conversation, text, answer_result)
         answer_result = self._build_answer_result(db, conversation, text, "knowledge")
         if answer_result:
-            return PipelineResult(
-                action="knowledge_reply",
-                text=answer_result.text,
-                evidence=answer_result.evidence,
-                risk_level="low",
-                intent="knowledge",
-                source_type=answer_result.source_type,
-                structured=answer_result.structured,
-                image_assets=answer_result.image_assets,
-            )
+            return self._reply_or_handoff(db, conversation, text, answer_result)
 
         return self._handoff(
             db,
@@ -162,6 +121,14 @@ class ResponseService:
         raw_payload: dict,
         telegram_message_id: str | None,
     ) -> tuple[Conversation | None, PipelineResult]:
+        if conversation and conversation.status == ConversationStatus.HANDOFF:
+            self.conversations.record_message(
+                db, conversation=conversation, source=MessageSource.CUSTOMER,
+                channel=MessageChannel.TELEGRAM_DM, content_text=text,
+                raw_payload_json=raw_payload, telegram_message_id=telegram_message_id,
+            )
+            self.handoff.sync_customer_message_to_group(db, conversation, text, bot_profile.telegram_bot_token)
+            return conversation, PipelineResult(action="handoff", text="", evidence=[], risk_level="high", intent="human_request", source_type="handoff")
         rule_result = self.rules.route(text, bot_profile=bot_profile)
         if rule_result and rule_result.action == "email_auto_reply":
             return self._record_business_reply_candidate(
@@ -254,114 +221,36 @@ class ResponseService:
 
         return None, self._ignored_business_result("unanswered", "medium")
 
+    def _reply_or_handoff(self, db: Session, conversation: Conversation, text: str, answer: RetrievedKnowledge) -> PipelineResult:
+        if answer.risk_level == RiskLevel.HIGH:
+            return self._handoff(db, conversation, text, RuleRouteResult(action="handoff", intent="high_risk_knowledge", risk_level="high"))
+        is_knowledge = answer.source_type == "knowledge_page"
+        return PipelineResult(
+            action="knowledge_reply" if is_knowledge else "template_reply",
+            text=answer.text, evidence=answer.evidence, risk_level=answer.risk_level.value,
+            intent="knowledge" if is_knowledge else "faq", source_type=answer.source_type,
+            structured=answer.structured, image_assets=answer.image_assets,
+        )
+
     def dispatch_reply(self, db: Session, conversation: Conversation, pipeline_result: PipelineResult) -> str | None:
-        if pipeline_result.action == "ignored":
+        """Persist the reply in the same transaction as the incoming message; never send here."""
+        from backend.api.app.services.delivery_service import queue_message
+        if pipeline_result.action == "ignored" or not (pipeline_result.text.strip() or pipeline_result.image_assets):
             return None
-        if pipeline_result.action == "handoff" and not pipeline_result.text:
-            return None
-
-        style = db.query(StyleProfile).filter(StyleProfile.bot_profile_id == conversation.bot_profile_id).first()
-        humanized = pipeline_result.text
-        has_text = bool(humanized.strip())
-        bot_profile = self.conversations.get_bot_profile(db, conversation.bot_profile_id) or self.conversations.get_default_bot_profile(db)
-        business_connection_id = getattr(conversation, "telegram_business_connection_id", None)
-        if has_text and style and pipeline_result.action != "handoff" and pipeline_result.source_type != "email_auto_reply":
-            try:
-                if pipeline_result.structured and pipeline_result.source_type == "knowledge_page":
-                    humanized = self.generator.preserve_structure(
-                        text=pipeline_result.text,
-                        banned_phrases=style.banned_phrases_json or [],
-                    ).text
-                else:
-                    humanized = self.generator.humanize(
-                        fact_answer=pipeline_result.text,
-                        tone=style.tone,
-                        banned_phrases=style.banned_phrases_json or [],
-                    ).text
-            except Exception:
-                logger.warning("Generator LLM failed; sending original response text", exc_info=True)
-                humanized = pipeline_result.text
-            if style.typing_enabled:
-                if business_connection_id:
-                    self.telegram.send_chat_action_sync(
-                        bot_profile.telegram_bot_token,
-                        conversation.telegram_chat_id,
-                        business_connection_id=business_connection_id,
-                    )
-                else:
-                    self.telegram.send_chat_action_sync(bot_profile.telegram_bot_token, conversation.telegram_chat_id)
-                delay = random.randint(style.delay_min_ms, style.delay_max_ms) / 1000
-                time.sleep(delay)
-
-        has_text = bool(humanized.strip())
-        telegram_message_id = None
-        if has_text:
-            if business_connection_id:
-                telegram_message_id = self.telegram.send_text_sync(
-                    bot_profile.telegram_bot_token,
-                    conversation.telegram_chat_id,
-                    humanized,
-                    business_connection_id=business_connection_id,
-                )
-            else:
-                telegram_message_id = self.telegram.send_text_sync(bot_profile.telegram_bot_token, conversation.telegram_chat_id, humanized)
-        photo_message_ids: list[int] = []
-        failed_photo_urls: list[str] = []
-        if (telegram_message_id or not has_text) and pipeline_result.image_assets:
-            for asset in pipeline_result.image_assets:
-                photo_url = str(asset.get("url") or "").strip()
-                if not photo_url:
-                    continue
-                photo_message_id = self.telegram.send_photo_sync(
-                    bot_profile.telegram_bot_token,
-                    conversation.telegram_chat_id,
-                    photo_url,
-                    business_connection_id=business_connection_id,
-                )
-                if photo_message_id:
-                    photo_message_ids.append(photo_message_id)
-                else:
-                    failed_photo_urls.append(photo_url)
         message = self.conversations.record_message(
-            db,
-            conversation=conversation,
-            source=MessageSource.BOT,
-            channel=MessageChannel.TELEGRAM_DM,
-            content_text=humanized,
-            raw_payload_json={
-                "evidence": pipeline_result.evidence,
-                "source_type": pipeline_result.source_type,
-                "business_connection_id": business_connection_id,
-                "image_assets": pipeline_result.image_assets,
-                "photo_message_ids": photo_message_ids,
-                "failed_photo_urls": failed_photo_urls,
-            },
-            telegram_message_id=str(telegram_message_id) if telegram_message_id else None,
-            intent=pipeline_result.intent,
-            risk_level=RiskLevel(pipeline_result.risk_level),
+            db, conversation=conversation, source=MessageSource.BOT,
+            channel=MessageChannel.TELEGRAM_DM, content_text=pipeline_result.text,
+            raw_payload_json={"evidence": pipeline_result.evidence, "source_type": pipeline_result.source_type,
+                              "image_assets": pipeline_result.image_assets},
+            telegram_message_id=None, intent=pipeline_result.intent, risk_level=RiskLevel(pipeline_result.risk_level),
         )
-        message.delivery_status = DeliveryStatus.SENT if telegram_message_id or photo_message_ids else DeliveryStatus.FAILED
-        self.audit.record(
-            db=db,
-            tenant_id=str(conversation.tenant_id),
-            actor_type="system",
-            action="message.dispatched",
-            target_type="conversation",
-            target_id=str(conversation.id),
-            detail_json={
-                "action": pipeline_result.action,
-                "intent": pipeline_result.intent,
-                "risk_level": pipeline_result.risk_level,
-                "source_type": pipeline_result.source_type,
-                "evidence": pipeline_result.evidence,
-                "sent": bool(telegram_message_id or photo_message_ids),
-                "image_count": len(pipeline_result.image_assets),
-                "photo_message_ids": photo_message_ids,
-                "failed_photo_urls": failed_photo_urls,
-                "business_connection_id": business_connection_id,
-            },
-        )
-        return humanized
+        queue_message(db, conversation, message, conversation.telegram_chat_id,
+                      text=pipeline_result.text, image_assets=pipeline_result.image_assets,
+                      business_connection_id=getattr(conversation, "telegram_business_connection_id", None),
+                      automatic=pipeline_result.action != "handoff",
+                      humanize=pipeline_result.action != "handoff" and pipeline_result.source_type != "email_auto_reply",
+                      structured=pipeline_result.structured)
+        return pipeline_result.text
 
     def _handoff(
         self,
@@ -417,7 +306,9 @@ class ResponseService:
         raw_payload: dict,
         telegram_message_id: str | None,
         answer_result: RetrievedKnowledge,
-    ) -> tuple[Conversation, PipelineResult]:
+    ) -> tuple[Conversation | None, PipelineResult]:
+        if answer_result.risk_level == RiskLevel.HIGH:
+            return None, self._ignored_business_result("high_risk_knowledge", "high")
         if conversation is None:
             conversation = self.conversations.get_or_create_conversation(
                 db=db,
@@ -442,7 +333,7 @@ class ResponseService:
             action="knowledge_reply" if is_knowledge_reply else "template_reply",
             text=answer_result.text,
             evidence=answer_result.evidence,
-            risk_level="low",
+            risk_level=answer_result.risk_level.value,
             intent="email_capture" if is_email_reply else "knowledge" if is_knowledge_reply else "faq",
             source_type=answer_result.source_type,
             structured=answer_result.structured,

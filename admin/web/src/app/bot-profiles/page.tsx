@@ -396,7 +396,7 @@ export default function BotProfilesPage() {
             {isSuperAdmin ? (
               <label>
                 所属客户
-                <select value={form.tenant_id} onChange={(event) => updateForm("tenant_id", event.target.value)}>
+                <select disabled={Boolean(editingBotId)} value={form.tenant_id} onChange={(event) => updateForm("tenant_id", event.target.value)}>
                   {tenants.map((tenant) => (
                     <option key={tenant.id} value={tenant.id}>
                       {tenant.name}

@@ -80,7 +80,7 @@ export async function login(username: string, password: string): Promise<TokenRe
   return tokens;
 }
 
-export async function refreshTokens(refreshToken = getRefreshToken()): Promise<TokenResponse> {
+async function performRefresh(refreshToken: string | null): Promise<TokenResponse> {
   if (!refreshToken) {
     clearTokens();
     throw new AuthError("Session expired");
@@ -96,7 +96,7 @@ export async function refreshTokens(refreshToken = getRefreshToken()): Promise<T
   });
 
   if (response.status === 401) {
-    clearTokens();
+    if (getRefreshToken() === refreshToken) clearTokens();
     throw new AuthError("Session expired");
   }
 
@@ -105,11 +105,55 @@ export async function refreshTokens(refreshToken = getRefreshToken()): Promise<T
   }
 
   const tokens = (await response.json()) as TokenResponse;
+  if (getRefreshToken() !== refreshToken) throw new AuthError("Session changed");
   storeTokens(tokens);
   return tokens;
 }
 
-export async function ensureAccessToken(forceRefresh = false): Promise<string> {
+let refreshInFlight: Promise<TokenResponse> | null = null;
+
+export async function refreshTokens(refreshToken = getRefreshToken()): Promise<TokenResponse> {
+  if (refreshInFlight) return refreshInFlight;
+  const refresh = async () => {
+    const current = getRefreshToken();
+    const access = getAccessToken();
+    if (current && current !== refreshToken && access) {
+      return { access_token: access, refresh_token: current, token_type: "bearer" };
+    }
+    return performRefresh(current);
+  };
+  // Serialize token rotation across pages and browser tabs.
+  const pending = (async () => {
+    if (typeof navigator !== "undefined" && navigator.locks) {
+      return await navigator.locks.request("csb-auth-refresh", refresh);
+    }
+    return await refresh();
+  })().finally(() => { refreshInFlight = null; });
+  refreshInFlight = pending;
+  return pending;
+}
+
+export async function logout(): Promise<void> {
+  const revoke = async () => {
+    const refreshToken = getRefreshToken();
+    if (refreshToken) {
+      const response = await fetch(`${getApiBaseUrl()}/auth/logout`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ refresh_token: refreshToken }), signal: AbortSignal.timeout(10000)
+      });
+      if (!response.ok && response.status !== 401) throw new Error(await readErrorMessage(response));
+    }
+    clearTokens();
+  };
+  if (typeof navigator !== "undefined" && navigator.locks) {
+    await navigator.locks.request("csb-auth-refresh", revoke);
+  } else {
+    if (refreshInFlight) await refreshInFlight.catch(() => undefined);
+    await revoke();
+  }
+}
+
+export async function ensureAccessToken(forceRefresh = false, rejectedToken?: string): Promise<string> {
   if (!isBrowser()) {
     throw new AuthError("Authentication required");
   }
@@ -121,6 +165,9 @@ export async function ensureAccessToken(forceRefresh = false): Promise<string> {
     }
   }
 
+  if (forceRefresh && rejectedToken && getAccessToken() && getAccessToken() !== rejectedToken) {
+    return getAccessToken()!;
+  }
   const tokens = await refreshTokens();
   return tokens.access_token;
 }

@@ -4,10 +4,15 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert
+from starlette.concurrency import run_in_threadpool
+from pydantic import ValidationError
+import uuid
+from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 
 from backend.api.app.core.config import get_settings
-from backend.api.app.db.models.entities import Message, MessageChannel, MessageSource
+from backend.api.app.db.models.entities import Conversation, Message, MessageChannel, MessageSource, TelegramUpdate
 from backend.api.app.db.session import get_db
 from backend.api.app.schemas.telegram import TelegramWebhookPayload
 from backend.api.app.services.conversation_service import ConversationService
@@ -73,22 +78,30 @@ async def process_telegram_webhook(
     if settings.webhook_secret and x_telegram_bot_api_secret_token != settings.webhook_secret:
         raise HTTPException(status_code=401, detail="Invalid webhook secret")
 
-    payload = TelegramWebhookPayload.model_validate(await request.json())
-    if not (
-        payload.business_connection
-        or payload.deleted_business_messages
-        or payload.business_message
-        or payload.edited_business_message
-        or payload.message
-        or payload.edited_message
-    ):
-        return {"status": "ignored"}
+    try:
+        payload = TelegramWebhookPayload.model_validate(await request.json())
+    except (ValueError, ValidationError) as exc:
+        raise HTTPException(status_code=400, detail="Invalid Telegram update") from exc
+    if payload.update_id is None:
+        raise HTTPException(status_code=400, detail="Telegram update_id is required")
+    return await run_in_threadpool(accept_update, db, payload, bot_identifier)
 
+
+def accept_update(db: Session, payload: TelegramWebhookPayload, bot_identifier: str | None) -> dict[str, Any]:
     bot_profile = resolve_webhook_bot_profile(db, bot_identifier)
+    now = datetime.now(timezone.utc)
+    statement = insert(TelegramUpdate).values(id=uuid.uuid4(), bot_profile_id=bot_profile.id,
+        update_id=payload.update_id, payload_json=payload.model_dump(), status="pending", attempts=0,
+        created_at=now, next_attempt_at=now).on_conflict_do_nothing(
+            constraint="uq_telegram_update_bot_update").returning(TelegramUpdate.id)
+    accepted = db.scalar(statement)
+    db.commit()
+    return {"status": "accepted" if accepted else "ignored", "reason": "queued" if accepted else "duplicate_update"}
 
+
+def process_received_update(db: Session, payload: TelegramWebhookPayload, bot_profile: object) -> dict[str, Any]:
     if payload.business_connection:
         connection = business_connection_service.upsert_business_connection(db, bot_profile, payload.business_connection)
-        db.commit()
         return {
             "status": "ok",
             "type": "business_connection",
@@ -97,7 +110,6 @@ async def process_telegram_webhook(
         }
 
     if payload.deleted_business_messages:
-        db.commit()
         return {"status": "ignored", "type": "deleted_business_messages"}
 
     message = payload.business_message or payload.edited_business_message or payload.message or payload.edited_message
@@ -130,7 +142,9 @@ async def process_telegram_webhook(
 
     if chat_type in {"group", "supergroup"}:
         duplicate_group_message = db.scalar(
-            select(Message).where(
+            select(Message).join(Conversation).where(
+                Conversation.bot_profile_id == bot_profile.id,
+                Message.telegram_chat_id == str(chat.get("id")),
                 Message.channel == MessageChannel.TELEGRAM_GROUP,
                 Message.source == MessageSource.AGENT,
                 Message.telegram_message_id == message_id,
@@ -145,13 +159,12 @@ async def process_telegram_webhook(
             reply_to_message_id=reply_to_message_id,
             text=text,
             bot_token=bot_profile.telegram_bot_token,
+            bot_profile_id=bot_profile.id,
         )
-        db.commit()
         return {"status": "ok", "handled": handled, "type": "group"}
 
     if is_business_message:
         if not business_connection_service.can_reply(business_connection):
-            db.commit()
             return {"status": "ignored", "reason": "business_connection_cannot_reply"}
 
         conversation = conversation_service.find_conversation(
@@ -176,11 +189,9 @@ async def process_telegram_webhook(
             telegram_message_id=message_id,
         )
         if not conversation:
-            db.commit()
             return {"status": "ignored", "action": pipeline_result.action, "reason": pipeline_result.intent}
 
         sent_text = response_service.dispatch_reply(db, conversation, pipeline_result)
-        db.commit()
         return {"status": "ok", "action": pipeline_result.action, "sent_text": sent_text}
 
     conversation = conversation_service.get_or_create_conversation(
@@ -196,7 +207,6 @@ async def process_telegram_webhook(
 
     pipeline_result = response_service.handle_customer_message(db, conversation, text, payload.model_dump(), message_id)
     sent_text = response_service.dispatch_reply(db, conversation, pipeline_result)
-    db.commit()
     return {"status": "ok", "action": pipeline_result.action, "sent_text": sent_text}
 
 

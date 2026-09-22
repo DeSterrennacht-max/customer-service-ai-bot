@@ -300,118 +300,20 @@ def test_handle_customer_message_ignores_email_auto_reply_when_disabled() -> Non
     assert result.intent == "unanswered"
 
 
-def test_dispatch_reply_falls_back_to_original_text_when_generator_fails() -> None:
-    service = ResponseService()
-    conversation = SimpleNamespace(
-        id=uuid4(),
-        tenant_id=uuid4(),
-        bot_profile_id=uuid4(),
-        telegram_chat_id="123456",
-    )
-    style = SimpleNamespace(
-        tone="friendly",
-        banned_phrases_json=[],
-        typing_enabled=False,
-    )
-    sent: dict[str, str] = {}
-
-    class FakeQuery:
-        def filter(self, *args, **kwargs):
-            return self
-
-        def first(self):
-            return style
-
-    class FakeDb:
-        def query(self, *args, **kwargs):
-            return FakeQuery()
-
-    class FailingGenerator:
-        def humanize(self, *args, **kwargs):
-            raise RuntimeError("llm unavailable")
-
-    service.generator = FailingGenerator()
-    service.conversations.get_bot_profile = lambda db, bot_profile_id: SimpleNamespace(telegram_bot_token="bot-token")
-    service.telegram.send_text_sync = lambda bot_token, chat_id, text: sent.update(
-        {"bot_token": bot_token, "chat_id": chat_id, "text": text}
-    ) or 10001
-    service.conversations.record_message = lambda *args, **kwargs: SimpleNamespace()
-    service.audit.record = lambda *args, **kwargs: None
-
-    result = PipelineResult(
-        action="template_reply",
-        text="你好，我是客服柠檬。",
-        evidence=["system:welcome"],
-        risk_level="low",
-        intent="welcome",
-        source_type="system",
-    )
-
-    reply = service.dispatch_reply(FakeDb(), conversation, result)
-
-    assert reply == "你好，我是客服柠檬。"
-    assert sent == {"bot_token": "bot-token", "chat_id": "123456", "text": "你好，我是客服柠檬。"}
+def test_delivery_preparation_falls_back_to_original_text_when_generator_fails(monkeypatch) -> None:
+    from backend.api.app.services.delivery_service import prepare_payload
+    from backend.api.app.llm.generator_client import GeneratorLLMClient
+    def fail(*args, **kwargs): raise RuntimeError("model unavailable")
+    monkeypatch.setattr(GeneratorLLMClient, "humanize", fail)
+    result = prepare_payload({"text": "准确的价格是 100 元", "humanize": True}, {"tone": "friendly", "banned_phrases": []})
+    assert result["rendered_text"] == "准确的价格是 100 元"
 
 
-def test_dispatch_reply_sends_email_auto_reply_without_humanizing() -> None:
-    service = ResponseService()
-    conversation = SimpleNamespace(
-        id=uuid4(),
-        tenant_id=uuid4(),
-        bot_profile_id=uuid4(),
-        telegram_chat_id="123456",
-    )
-    style = SimpleNamespace(
-        tone="friendly",
-        banned_phrases_json=[],
-        typing_enabled=True,
-    )
-    sent: dict[str, str] = {}
-
-    class FakeQuery:
-        def filter(self, *args, **kwargs):
-            return self
-
-        def first(self):
-            return style
-
-    class FakeDb:
-        def query(self, *args, **kwargs):
-            return FakeQuery()
-
-    class FailingGenerator:
-        def humanize(self, *args, **kwargs):
-            raise AssertionError("邮箱自动回复不应被风格改写")
-
-        def preserve_structure(self, *args, **kwargs):
-            raise AssertionError("邮箱自动回复不应被风格改写")
-
-    service.generator = FailingGenerator()
-    service.conversations.get_bot_profile = lambda db, bot_profile_id: SimpleNamespace(telegram_bot_token="bot-token")
-    service.telegram.send_chat_action_sync = lambda *args, **kwargs: pytest.fail("邮箱自动回复不应模拟输入")
-    service.telegram.send_text_sync = lambda bot_token, chat_id, text: sent.update(
-        {"bot_token": bot_token, "chat_id": chat_id, "text": text}
-    ) or 10001
-    service.conversations.record_message = lambda *args, **kwargs: SimpleNamespace()
-    service.audit.record = lambda *args, **kwargs: None
-
-    result = PipelineResult(
-        action="template_reply",
-        text="已收到你的邮箱，我们会根据你提供的信息继续处理。",
-        evidence=["system:email_auto_reply"],
-        risk_level="low",
-        intent="email_capture",
-        source_type="email_auto_reply",
-    )
-
-    reply = service.dispatch_reply(FakeDb(), conversation, result)
-
-    assert reply == "已收到你的邮箱，我们会根据你提供的信息继续处理。"
-    assert sent == {
-        "bot_token": "bot-token",
-        "chat_id": "123456",
-        "text": "已收到你的邮箱，我们会根据你提供的信息继续处理。",
-    }
+def test_dispatch_reply_queues_email_without_humanizing() -> None:
+    result = PipelineResult(action="template_reply", text="邮箱已收到", evidence=[], risk_level="low", intent="email_capture", source_type="email_auto_reply")
+    message, items = queued_reply(result)
+    assert items[0].payload_json["humanize"] is False
+    assert message.delivery_status == DeliveryStatus.PENDING
 
 
 def test_handle_customer_message_uses_knowledge_when_faq_misses() -> None:
@@ -703,253 +605,31 @@ def test_handle_business_customer_message_ignores_handoff_trigger_without_record
     assert result.intent == "human_request"
 
 
-def test_dispatch_reply_sends_unanswered_handoff_notice_to_customer() -> None:
-    service = ResponseService()
-    conversation = SimpleNamespace(
-        id=uuid4(),
-        tenant_id=uuid4(),
-        bot_profile_id=uuid4(),
-        telegram_chat_id="123456",
-    )
-    sent: dict[str, str] = {}
-
-    class EmptyQuery:
-        def filter(self, *args, **kwargs):
-            return self
-
-        def first(self):
-            return None
-
-    class FakeDb:
-        def query(self, *args, **kwargs):
-            return EmptyQuery()
-
-    service.conversations.get_bot_profile = lambda db, bot_profile_id: SimpleNamespace(telegram_bot_token="bot-token")
-    service.telegram.send_text_sync = lambda bot_token, chat_id, text: sent.update(
-        {"bot_token": bot_token, "chat_id": chat_id, "text": text}
-    ) or 10002
-    service.conversations.record_message = lambda *args, **kwargs: SimpleNamespace()
-    service.audit.record = lambda *args, **kwargs: None
-
-    result = PipelineResult(
-        action="handoff",
-        text=UNANSWERED_HANDOFF_NOTICE,
-        evidence=["handoff:ticket-id"],
-        risk_level="high",
-        intent="unanswered",
-        source_type="handoff",
-    )
-
-    reply = service.dispatch_reply(FakeDb(), conversation, result)
-
-    assert reply == UNANSWERED_HANDOFF_NOTICE
-    assert sent == {"bot_token": "bot-token", "chat_id": "123456", "text": UNANSWERED_HANDOFF_NOTICE}
+def test_dispatch_reply_queues_handoff_notice_while_automatic_replies_are_paused() -> None:
+    result = PipelineResult(action="handoff", text="请稍候", evidence=[], risk_level="high", intent="unanswered", source_type="handoff")
+    message, items = queued_reply(result)
+    assert items[0].automatic is False
+    assert items[0].payload_json["humanize"] is False
 
 
-def test_dispatch_reply_sends_business_message_with_connection_id() -> None:
-    service = ResponseService()
-    conversation = SimpleNamespace(
-        id=uuid4(),
-        tenant_id=uuid4(),
-        bot_profile_id=uuid4(),
-        telegram_chat_id="123456",
-        telegram_business_connection_id="business-connection-1",
-    )
-    sent: dict[str, str] = {}
-
-    class EmptyQuery:
-        def filter(self, *args, **kwargs):
-            return self
-
-        def first(self):
-            return None
-
-    class FakeDb:
-        def query(self, *args, **kwargs):
-            return EmptyQuery()
-
-    def fake_send_text_sync(bot_token: str, chat_id: str, text: str, **kwargs):
-        sent.update({"bot_token": bot_token, "chat_id": chat_id, "text": text, **kwargs})
-        return 10003
-
-    service.conversations.get_bot_profile = lambda db, bot_profile_id: SimpleNamespace(telegram_bot_token="bot-token")
-    service.telegram.send_text_sync = fake_send_text_sync
-    service.conversations.record_message = lambda *args, **kwargs: SimpleNamespace()
-    service.audit.record = lambda *args, **kwargs: None
-
-    result = PipelineResult(
-        action="template_reply",
-        text="这是 Business 回复。",
-        evidence=["faq:test"],
-        risk_level="low",
-        intent="faq",
-        source_type="faq",
-    )
-
-    reply = service.dispatch_reply(FakeDb(), conversation, result)
-
-    assert reply == "这是 Business 回复。"
-    assert sent == {
-        "bot_token": "bot-token",
-        "chat_id": "123456",
-        "text": "这是 Business 回复。",
-        "business_connection_id": "business-connection-1",
-    }
+def test_dispatch_reply_queues_business_message_with_connection_id() -> None:
+    result = PipelineResult(action="template_reply", text="你好", evidence=[], risk_level="low", intent="faq")
+    message, items = queued_reply(result, business_connection_id="business-connection-1")
+    assert items[0].business_connection_id == "business-connection-1"
 
 
-def test_dispatch_reply_sends_text_then_object_storage_photos() -> None:
-    service = ResponseService()
-    conversation = SimpleNamespace(
-        id=uuid4(),
-        tenant_id=uuid4(),
-        bot_profile_id=uuid4(),
-        telegram_chat_id="123456",
-        telegram_business_connection_id="business-connection-1",
-    )
-    calls: list[dict[str, str]] = []
-    recorded_payload: dict = {}
-
-    class EmptyQuery:
-        def filter(self, *args, **kwargs):
-            return self
-
-        def first(self):
-            return None
-
-    class FakeDb:
-        def query(self, *args, **kwargs):
-            return EmptyQuery()
-
-    def fake_send_text_sync(bot_token: str, chat_id: str, text: str, **kwargs):
-        calls.append({"kind": "text", "bot_token": bot_token, "chat_id": chat_id, "text": text, **kwargs})
-        return 10004
-
-    def fake_send_photo_sync(bot_token: str, chat_id: str, photo: str, **kwargs):
-        calls.append({"kind": "photo", "bot_token": bot_token, "chat_id": chat_id, "photo": photo, **kwargs})
-        return 10005
-
-    def fake_record_message(*args, **kwargs):
-        recorded_payload.update(kwargs["raw_payload_json"])
-        return SimpleNamespace()
-
-    service.conversations.get_bot_profile = lambda db, bot_profile_id: SimpleNamespace(telegram_bot_token="bot-token")
-    service.telegram.send_text_sync = fake_send_text_sync
-    service.telegram.send_photo_sync = fake_send_photo_sync
-    service.conversations.record_message = fake_record_message
-    service.audit.record = lambda *args, **kwargs: None
-
-    result = PipelineResult(
-        action="template_reply",
-        text="请看价格图。",
-        evidence=["faq:pricing"],
-        risk_level="low",
-        intent="faq",
-        source_type="faq",
-        image_assets=[
-            {
-                "url": "https://media.example.com/price.png",
-                "object_key": "tenants/test/content-images/faq/price.png",
-                "filename": "price.png",
-                "content_type": "image/png",
-                "size_bytes": 128,
-            }
-        ],
-    )
-
-    reply = service.dispatch_reply(FakeDb(), conversation, result)
-
-    assert reply == "请看价格图。"
-    assert calls == [
-        {
-            "kind": "text",
-            "bot_token": "bot-token",
-            "chat_id": "123456",
-            "text": "请看价格图。",
-            "business_connection_id": "business-connection-1",
-        },
-        {
-            "kind": "photo",
-            "bot_token": "bot-token",
-            "chat_id": "123456",
-            "photo": "https://media.example.com/price.png",
-            "business_connection_id": "business-connection-1",
-        },
-    ]
-    assert recorded_payload["photo_message_ids"] == [10005]
+def test_dispatch_reply_queues_text_and_photos_in_order() -> None:
+    result = PipelineResult(action="template_reply", text="你好", evidence=[], risk_level="low", intent="faq", image_assets=[{"url": "https://media.example.com/a.png"}])
+    message, items = queued_reply(result)
+    assert [item.kind for item in items] == ["text", "photo"]
+    assert [item.sequence for item in items] == [0, 1]
+    assert items[1].payload_json["url"] == "https://media.example.com/a.png"
 
 
-def test_dispatch_reply_sends_object_storage_photo_without_text() -> None:
-    service = ResponseService()
-    conversation = SimpleNamespace(
-        id=uuid4(),
-        tenant_id=uuid4(),
-        bot_profile_id=uuid4(),
-        telegram_chat_id="123456",
-    )
-    calls: list[dict[str, str]] = []
-    message = SimpleNamespace(delivery_status=None)
-    recorded_payload: dict = {}
-    audit_payload: dict = {}
-
-    class EmptyQuery:
-        def filter(self, *args, **kwargs):
-            return self
-
-        def first(self):
-            return None
-
-    class FakeDb:
-        def query(self, *args, **kwargs):
-            return EmptyQuery()
-
-    service.conversations.get_bot_profile = lambda db, bot_profile_id: SimpleNamespace(telegram_bot_token="bot-token")
-    service.telegram.send_text_sync = lambda *args, **kwargs: pytest.fail("图片-only 回复不应发送空文本")
-
-    def fake_send_photo_sync(bot_token: str, chat_id: str, photo: str, **kwargs):
-        calls.append({"kind": "photo", "bot_token": bot_token, "chat_id": chat_id, "photo": photo, **kwargs})
-        return 10006
-
-    def fake_record_message(*args, **kwargs):
-        recorded_payload.update(kwargs["raw_payload_json"])
-        return message
-
-    service.telegram.send_photo_sync = fake_send_photo_sync
-    service.conversations.record_message = fake_record_message
-    service.audit.record = lambda *args, **kwargs: audit_payload.update(kwargs["detail_json"])
-
-    result = PipelineResult(
-        action="template_reply",
-        text="",
-        evidence=["faq:pricing"],
-        risk_level="low",
-        intent="faq",
-        source_type="faq",
-        image_assets=[
-            {
-                "url": "https://media.example.com/price.png",
-                "object_key": "tenants/test/content-images/faq/price.png",
-                "filename": "price.png",
-                "content_type": "image/png",
-                "size_bytes": 128,
-            }
-        ],
-    )
-
-    reply = service.dispatch_reply(FakeDb(), conversation, result)
-
-    assert reply == ""
-    assert calls == [
-        {
-            "kind": "photo",
-            "bot_token": "bot-token",
-            "chat_id": "123456",
-            "photo": "https://media.example.com/price.png",
-            "business_connection_id": None,
-        }
-    ]
-    assert audit_payload["sent"] is True
-    assert recorded_payload["photo_message_ids"] == [10006]
-    assert message.delivery_status == DeliveryStatus.SENT
+def test_dispatch_reply_queues_photo_without_text() -> None:
+    result = PipelineResult(action="template_reply", text="", evidence=[], risk_level="low", intent="faq", image_assets=[{"url": "https://media.example.com/a.png"}])
+    message, items = queued_reply(result)
+    assert [item.kind for item in items] == ["photo"]
 
 
 def test_followup_message_reuses_recent_context_before_generic_knowledge_lookup() -> None:
@@ -1106,3 +786,18 @@ def test_handoff_uses_conversation_bot_profile_group_instead_of_default_bot() ->
         "bot_token": "bot-token-from-conversation",
         "group_chat_id": "-100200300400",
     }
+
+
+def queued_reply(result, business_connection_id=None):
+    from backend.api.app.db.models.entities import Message
+    service = ResponseService()
+    conversation = SimpleNamespace(id=uuid4(), tenant_id=uuid4(), bot_profile_id=uuid4(), telegram_chat_id="42", telegram_business_connection_id=business_connection_id)
+    message = Message(id=uuid4(), tenant_id=conversation.tenant_id, conversation_id=conversation.id)
+    service.conversations.record_message = lambda *args, **kwargs: message
+    class QueueDb:
+        def __init__(self): self.items = []
+        def flush(self): pass
+        def add(self, item): self.items.append(item)
+    db = QueueDb()
+    service.dispatch_reply(db, conversation, result)
+    return message, db.items

@@ -4,13 +4,14 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from backend.api.app.db.models.entities import Conversation, ConversationStatus, HandoffStatus, HandoffTicket, Message
 from backend.api.app.db.models.entities import MessageChannel, MessageSource, RiskLevel
 from backend.api.app.services.audit_service import AuditService
 from backend.api.app.services.telegram_service import TelegramService
+from backend.api.app.services.delivery_service import queue_message
 
 
 class HandoffService:
@@ -25,6 +26,8 @@ class HandoffService:
             .order_by(HandoffTicket.created_at.desc())
         )
         if ticket and ticket.status in {HandoffStatus.OPEN, HandoffStatus.ACTIVE}:
+            conversation.status = ConversationStatus.HANDOFF
+            conversation.handoff_ticket_id = ticket.id
             return ticket
 
         ticket = HandoffTicket(
@@ -94,6 +97,8 @@ class HandoffService:
             "refund": "客户提及退款，需人工介入",
             "needs_human": "需人工进一步处理",
             "unanswered": "知识库未命中，需人工介入",
+            "manual_takeover": "管理员手动接管",
+            "high_risk_knowledge": "命中高风险知识，需人工介入",
         }
         return reason_map.get(reason, reason)
 
@@ -107,40 +112,35 @@ class HandoffService:
         )
 
     def notify_support_group(self, db: Session, ticket: HandoffTicket, conversation: Conversation, bot_token: str, group_chat_id: str | None) -> HandoffTicket:
-        if not group_chat_id:
+        if not group_chat_id or ticket.group_thread_key:
             return ticket
-
+        existing = db.scalar(select(Message).where(
+            Message.conversation_id == conversation.id,
+            Message.raw_payload_json["handoff_ticket_id"].astext == str(ticket.id),
+            Message.raw_payload_json["handoff_group_message_type"].astext == "summary"))
+        if existing:
+            return ticket
+        ticket.group_chat_id = group_chat_id
         summary = self._build_handoff_summary(db, ticket, conversation)
-        message_id = self.telegram.send_text_sync(bot_token, group_chat_id, summary)
-        if message_id:
-            ticket.group_chat_id = group_chat_id
-            ticket.group_thread_key = str(message_id)
-            ticket.status = HandoffStatus.ACTIVE
-            db.add(
-                Message(
-                    tenant_id=conversation.tenant_id,
-                    conversation_id=conversation.id,
-                    source=MessageSource.SYSTEM,
-                    channel=MessageChannel.TELEGRAM_GROUP,
-                    telegram_message_id=str(message_id),
-                    content_text=summary,
-                    raw_payload_json={
-                        "handoff_ticket_id": str(ticket.id),
-                        "handoff_group_message_type": "summary",
-                        "group_chat_id": group_chat_id,
-                    },
-                    risk_level=RiskLevel.HIGH,
-                )
-            )
+        message = Message(tenant_id=conversation.tenant_id, conversation_id=conversation.id,
+            source=MessageSource.SYSTEM, channel=MessageChannel.TELEGRAM_GROUP,
+            telegram_chat_id=group_chat_id, content_text=summary,
+            raw_payload_json={"handoff_ticket_id": str(ticket.id), "handoff_group_message_type": "summary", "group_chat_id": group_chat_id},
+            risk_level=RiskLevel.HIGH)
+        db.add(message)
+        queue_message(db, conversation, message, group_chat_id, text=summary)
         return ticket
 
-    def _find_ticket_for_group_reply(self, db: Session, group_chat_id: str, reply_to_message_id: str) -> HandoffTicket | None:
+    def _find_ticket_for_group_reply(self, db: Session, group_chat_id: str, reply_to_message_id: str, bot_profile_id: UUID) -> HandoffTicket | None:
         candidate_messages = list(
             db.scalars(
-                select(Message).where(
+                select(Message).join(Conversation).where(
+                    Conversation.bot_profile_id == bot_profile_id,
+                    Message.telegram_chat_id == group_chat_id,
                     Message.channel == MessageChannel.TELEGRAM_GROUP,
                     Message.source == MessageSource.SYSTEM,
-                    Message.telegram_message_id == reply_to_message_id,
+                    or_(Message.telegram_message_id == reply_to_message_id,
+                        Message.raw_payload_json["text_message_ids"].contains([reply_to_message_id])),
                 )
             ).all()
         )
@@ -162,7 +162,8 @@ class HandoffService:
             return ticket
 
         return db.scalar(
-            select(HandoffTicket).where(
+            select(HandoffTicket).join(Conversation, Conversation.id == HandoffTicket.conversation_id).where(
+                Conversation.bot_profile_id == bot_profile_id,
                 HandoffTicket.group_chat_id == group_chat_id,
                 HandoffTicket.group_thread_key == reply_to_message_id,
                 HandoffTicket.status.in_([HandoffStatus.OPEN, HandoffStatus.ACTIVE]),
@@ -177,45 +178,29 @@ class HandoffService:
         reply_to_message_id: str | None,
         text: str,
         bot_token: str,
+        bot_profile_id: UUID,
     ) -> bool:
-        if not reply_to_message_id:
+        if not reply_to_message_id or not text.strip():
             return False
 
-        ticket = self._find_ticket_for_group_reply(db, group_chat_id, reply_to_message_id)
+        ticket = self._find_ticket_for_group_reply(db, group_chat_id, reply_to_message_id, bot_profile_id)
         if not ticket:
             return False
 
-        conversation = db.get(Conversation, ticket.conversation_id)
-        if not conversation:
+        conversation = db.get(Conversation, ticket.conversation_id, with_for_update=True)
+        if not conversation or conversation.bot_profile_id != bot_profile_id or conversation.status != ConversationStatus.HANDOFF:
             return False
 
         business_connection_id = getattr(conversation, "telegram_business_connection_id", None)
-        if business_connection_id:
-            outbound_id = self.telegram.send_text_sync(
-                bot_token,
-                conversation.telegram_chat_id,
-                text,
-                business_connection_id=business_connection_id,
-            )
-        else:
-            outbound_id = self.telegram.send_text_sync(bot_token, conversation.telegram_chat_id, text)
-        db.add(
-            Message(
-                tenant_id=conversation.tenant_id,
-                conversation_id=conversation.id,
-                source=MessageSource.AGENT,
-                channel=MessageChannel.TELEGRAM_GROUP,
-                telegram_message_id=incoming_group_message_id,
-                reply_to_message_id=reply_to_message_id,
-                content_text=text,
-                raw_payload_json={
-                    "handoff_ticket_id": str(ticket.id),
-                    "outbound_customer_message_id": str(outbound_id) if outbound_id else None,
-                    "business_connection_id": business_connection_id,
-                },
-                risk_level=RiskLevel.MEDIUM,
-            )
-        )
+        message = Message(tenant_id=conversation.tenant_id, conversation_id=conversation.id,
+            source=MessageSource.AGENT, channel=MessageChannel.TELEGRAM_GROUP,
+            telegram_chat_id=group_chat_id, telegram_message_id=incoming_group_message_id,
+            reply_to_message_id=reply_to_message_id, content_text=text,
+            raw_payload_json={"handoff_ticket_id": str(ticket.id), "group_chat_id": group_chat_id,
+                              "business_connection_id": business_connection_id}, risk_level=RiskLevel.MEDIUM)
+        db.add(message)
+        queue_message(db, conversation, message, conversation.telegram_chat_id, text=text,
+                      business_connection_id=business_connection_id)
         conversation.last_message_at = datetime.now(timezone.utc)
         self.audit.record(
             db=db,
@@ -239,24 +224,13 @@ class HandoffService:
             f"客户: {self._customer_label(db, conversation)}\n"
             f"信息内容:\n{text}"
         )
-        message_id = self.telegram.send_text_sync(bot_token, ticket.group_chat_id, summary)
-        if message_id:
-            db.add(
-                Message(
-                    tenant_id=conversation.tenant_id,
-                    conversation_id=conversation.id,
-                    source=MessageSource.SYSTEM,
-                    channel=MessageChannel.TELEGRAM_GROUP,
-                    telegram_message_id=str(message_id),
-                    content_text=summary,
-                    raw_payload_json={
-                        "handoff_ticket_id": str(ticket.id),
-                        "handoff_group_message_type": "customer_sync",
-                        "group_chat_id": ticket.group_chat_id,
-                    },
-                    risk_level=RiskLevel.HIGH,
-                )
-            )
+        message = Message(tenant_id=conversation.tenant_id, conversation_id=conversation.id,
+            source=MessageSource.SYSTEM, channel=MessageChannel.TELEGRAM_GROUP,
+            telegram_chat_id=ticket.group_chat_id, content_text=summary,
+            raw_payload_json={"handoff_ticket_id": str(ticket.id), "handoff_group_message_type": "customer_sync",
+                              "group_chat_id": ticket.group_chat_id}, risk_level=RiskLevel.HIGH)
+        db.add(message)
+        queue_message(db, conversation, message, ticket.group_chat_id, text=summary)
         self.audit.record(
             db=db,
             tenant_id=str(conversation.tenant_id),
@@ -296,7 +270,7 @@ class HandoffService:
         released: list[Conversation] = []
         conversations = list(
             db.scalars(
-                select(Conversation).where(Conversation.status == ConversationStatus.HANDOFF)
+                select(Conversation).where(Conversation.status == ConversationStatus.HANDOFF).with_for_update(skip_locked=True)
             ).all()
         )
         for conversation in conversations:

@@ -8,10 +8,10 @@ from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from backend.api.app.core.security import decode_token
 from backend.api.app.db.models.entities import BotProfile, Tenant, User, UserRole
 from backend.api.app.db.session import get_db
 from backend.api.app.services.tenant_service import is_tenant_operational, tenant_runtime_label
+from backend.api.app.services.auth_session_service import parse_session_claims, validate_session
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 
@@ -20,17 +20,9 @@ def get_current_user(
     token: Annotated[str, Depends(oauth2_scheme)],
     db: Annotated[Session, Depends(get_db)],
 ) -> User:
-    try:
-        payload = decode_token(token)
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token") from exc
-
-    if payload.get("type") != "access":
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token type")
-
-    user = db.scalar(select(User).where(User.id == UUID(payload["sub"])))
-    if not user or not user.is_active:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Inactive user")
+    payload = parse_session_claims(token, "access")
+    user = db.scalar(select(User).where(User.id == payload["user_id"]))
+    validate_session(db, user, payload)
     ensure_user_operational(user, db)
     return user
 

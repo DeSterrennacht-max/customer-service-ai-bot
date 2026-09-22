@@ -63,7 +63,7 @@ async function requestJSON<T>(path: string, init: RequestInit = {}, retryOnUnaut
 
   if (response.status === 401 && retryOnUnauthorized) {
     try {
-      await ensureAccessToken(true);
+      await ensureAccessToken(true, accessToken);
     } catch (error) {
       clearTokens();
       if (error instanceof AuthError) {
@@ -102,6 +102,9 @@ function withQuery(path: string, params: Record<string, string | null | undefine
 }
 
 export const api = {
+  retryMessage: (conversationId: string, messageId: string, confirmUncertain: boolean) =>
+    requestJSON<{status: string}>(`/admin/conversations/${conversationId}/messages/${messageId}/retry`,
+      { method: "POST", body: JSON.stringify({ confirm_uncertain: confirmUncertain }) }),
   me: () => requestJSON<CurrentUser>("/auth/me"),
   changePassword: (payload: ChangePasswordPayload) =>
     requestJSON<void>("/auth/change-password", { method: "POST", body: JSON.stringify(payload) }),

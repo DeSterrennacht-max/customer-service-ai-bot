@@ -1,0 +1,16 @@
+.git
+.venv
+**/__pycache__
+**/.pytest_cache
+**/node_modules
+**/.next
+**/*.tsbuildinfo
+**/.env
+**/.env.*
+infra/env/*
+**/*.pem
+**/id_ed25519*
+**/id_rsa*
+**/.DS_Store
+artifacts
+backups

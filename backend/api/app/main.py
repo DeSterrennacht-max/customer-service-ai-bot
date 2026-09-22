@@ -44,6 +44,7 @@ def health() -> dict[str, str]:
 
 @app.on_event("startup")
 def on_startup() -> None:
+    settings.validate_production()
     if settings.auto_create_schema:
         Base.metadata.create_all(bind=engine)
     if settings.bootstrap_demo_data:

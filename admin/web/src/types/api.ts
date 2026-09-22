@@ -84,6 +84,7 @@ export interface Message {
   intent?: string | null;
   risk_level: "low" | "medium" | "high";
   delivery_status: string;
+  deliveries: { id: string; kind: string; status: string; attempts: number; last_error?: string | null }[];
   created_at: string;
 }
 

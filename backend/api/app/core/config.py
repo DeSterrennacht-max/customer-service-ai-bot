@@ -3,7 +3,7 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -11,8 +11,8 @@ ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
 
 
 class Settings(BaseSettings):
-    app_name: str = "Telegram Customer Service Bot API"
-    app_env: str = "development"
+    app_name: str = Field(default="Telegram Customer Service Bot API", validation_alias=AliasChoices("APP_NAME", "APP_APP_NAME"))
+    app_env: str = Field(default="development", validation_alias=AliasChoices("APP_ENV", "APP_APP_ENV"))
     host: str = "0.0.0.0"
     port: int = 8000
     secret_key: str = "change-me"
@@ -53,7 +53,21 @@ class Settings(BaseSettings):
         "http://127.0.0.1:3000",
     ]
 
-    model_config = SettingsConfigDict(env_prefix="APP_", env_file=ENV_FILE, extra="ignore")
+    login_attempt_limit: int = 10
+    login_attempt_window_seconds: int = 900
+    delivery_max_attempts: int = 5
+
+    model_config = SettingsConfigDict(env_prefix="APP_", env_file=ENV_FILE, extra="ignore", populate_by_name=True)
+
+    def validate_production(self) -> "Settings":
+        if self.app_env == "production":
+            if len(self.secret_key) < 32 or self.secret_key == "change-me":
+                raise ValueError("Production requires APP_SECRET_KEY with at least 32 characters")
+            if not self.webhook_secret or not self.public_base_url or not self.public_base_url.startswith("https://"):
+                raise ValueError("Production requires APP_WEBHOOK_SECRET and an HTTPS APP_PUBLIC_BASE_URL")
+            if self.auto_create_schema or self.bootstrap_demo_data:
+                raise ValueError("Production requires migrations and disabled demo bootstrap")
+        return self
 
 
 @lru_cache

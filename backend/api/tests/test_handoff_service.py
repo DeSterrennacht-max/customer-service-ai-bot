@@ -43,11 +43,14 @@ class HandoffDbSession:
             return FakeScalarResult(self.group_messages)
         return FakeScalarResult(self.handoff_conversations)
 
-    def get(self, _model: object, key: object) -> object | None:
+    def get(self, _model: object, key: object, **kwargs) -> object | None:
         return self.objects.get(key)
 
     def add(self, obj: object) -> None:
+        if getattr(obj, "id", None) is None: obj.id = uuid4()
         self.added.append(obj)
+
+    def flush(self): pass
 
 
 def test_build_handoff_summary_uses_username_and_human_reason_label() -> None:
@@ -106,6 +109,7 @@ def test_handle_group_reply_accepts_customer_sync_message_reference() -> None:
         tenant_id=uuid4(),
         telegram_chat_id="6059820900",
         last_message_at=None,
+        bot_profile_id=uuid4(), status=ConversationStatus.HANDOFF,
     )
     ticket = SimpleNamespace(
         id=ticket_id,
@@ -138,11 +142,12 @@ def test_handle_group_reply_accepts_customer_sync_message_reference() -> None:
         reply_to_message_id="2001",
         text="您好，我来接手处理。",
         bot_token="bot-token",
+        bot_profile_id=conversation.bot_profile_id,
     )
 
     assert handled is True
     assert conversation.last_message_at is not None
-    assert len(db.added) == 1
+    assert len(db.added) == 2
     agent_message = db.added[0]
     assert agent_message.source == MessageSource.AGENT
     assert agent_message.reply_to_message_id == "2001"
@@ -160,6 +165,7 @@ def test_handle_group_reply_forwards_with_business_connection_id() -> None:
         telegram_chat_id="6059820900",
         telegram_business_connection_id="business-connection-1",
         last_message_at=None,
+        bot_profile_id=uuid4(), status=ConversationStatus.HANDOFF,
     )
     ticket = SimpleNamespace(
         id=ticket_id,
@@ -196,10 +202,11 @@ def test_handle_group_reply_forwards_with_business_connection_id() -> None:
         reply_to_message_id="2002",
         text="您好，我来接手处理。",
         bot_token="bot-token",
+        bot_profile_id=conversation.bot_profile_id,
     )
 
     assert handled is True
-    assert captured["business_connection_id"] == "business-connection-1"
+    assert db.added[1].business_connection_id == "business-connection-1"
     assert db.added[0].raw_payload_json["business_connection_id"] == "business-connection-1"
 
 

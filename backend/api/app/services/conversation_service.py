@@ -5,7 +5,7 @@ from typing import Any
 from uuid import UUID
 
 from sqlalchemy import or_, select
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session, joinedload, selectinload
 
 from backend.api.app.db.models.entities import BotProfile, Conversation, ConversationStatus, Message, MessageChannel, MessageSource, RiskLevel, User
 from backend.api.app.dependencies import is_super_admin
@@ -69,7 +69,7 @@ class ConversationService:
                 Conversation.bot_profile_id == bot_profile.id,
                 Conversation.telegram_chat_id == telegram_chat_id,
                 business_connection_filter,
-            )
+            ).with_for_update()
         )
         if conversation:
             return conversation
@@ -104,7 +104,7 @@ class ConversationService:
                 Conversation.bot_profile_id == bot_profile.id,
                 Conversation.telegram_chat_id == telegram_chat_id,
                 business_connection_filter,
-            )
+            ).with_for_update()
         )
 
     def record_message(
@@ -126,6 +126,7 @@ class ConversationService:
             source=source,
             channel=channel,
             telegram_message_id=telegram_message_id,
+            telegram_chat_id=conversation.telegram_chat_id,
             reply_to_message_id=reply_to_message_id,
             content_text=content_text,
             raw_payload_json=raw_payload_json,
@@ -152,7 +153,7 @@ class ConversationService:
     def get_conversation_detail(self, db: Session, conversation_id: str, user: User) -> Conversation | None:
         statement = (
             select(Conversation)
-            .options(joinedload(Conversation.messages))
+            .options(joinedload(Conversation.messages).selectinload(Message.deliveries))
             .where(Conversation.id == UUID(conversation_id))
         )
         if not is_super_admin(user):

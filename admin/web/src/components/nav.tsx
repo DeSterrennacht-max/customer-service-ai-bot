@@ -5,7 +5,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 
 import { api } from "@/lib/api";
-import { clearTokens, isAuthenticated } from "@/lib/auth";
+import { logout, isAuthenticated } from "@/lib/auth";
 
 const links = [
   { href: "/", label: "概览" },
@@ -22,6 +22,7 @@ export function Nav() {
   const router = useRouter();
   const [authenticated, setAuthenticated] = useState(false);
   const [isSuperAdmin, setIsSuperAdmin] = useState(false);
+  const [logoutError, setLogoutError] = useState<string | null>(null);
 
   useEffect(() => {
     setAuthenticated(isAuthenticated());
@@ -56,11 +57,15 @@ export function Nav() {
     };
   }, [pathname]);
 
-  function handleLogout() {
-    clearTokens();
-    setAuthenticated(false);
-    setIsSuperAdmin(false);
-    router.replace("/login");
+  async function handleLogout() {
+    try {
+      await logout();
+      setAuthenticated(false);
+      setIsSuperAdmin(false);
+      router.replace("/login");
+    } catch {
+      setLogoutError("退出登录失败，请重试。");
+    }
   }
 
   const visibleLinks = isSuperAdmin ? [...links.slice(0, 3), { href: "/tenants", label: "租户管理" }, ...links.slice(3)] : links;
@@ -82,6 +87,7 @@ export function Nav() {
         ))}
       </div>
       <div className="nav-footer">
+        {logoutError ? <p className="error-text">{logoutError}</p> : null}
         {authenticated ? (
           <button type="button" className="button-secondary nav-button" onClick={handleLogout}>
             退出登录

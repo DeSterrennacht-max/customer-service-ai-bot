@@ -1,16 +1,14 @@
-FROM python:3.12-slim
+FROM python:3.12.14-slim
 
 WORKDIR /workspace
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
-RUN apt-get update && apt-get install -y build-essential && rm -rf /var/lib/apt/lists/*
+COPY backend/requirements.lock /tmp/requirements.lock
+RUN pip install --no-cache-dir -r /tmp/requirements.lock
 
-RUN pip install --no-cache-dir -U pip && pip install --no-cache-dir \
-    alembic aiogram "bcrypt==4.0.1" boto3 "celery[redis]" email-validator fastapi httpx "passlib[bcrypt]" "psycopg[binary]" \
-    pydantic-settings "python-jose[cryptography]" python-multipart sqlalchemy "uvicorn[standard]"
+COPY backend /workspace/backend
+COPY shared /workspace/shared
 
-COPY . /workspace
-
-CMD ["celery", "-A", "backend.worker.app.celery_app:celery_app", "worker", "--loglevel=INFO"]
+CMD ["celery", "-A", "backend.worker.app.celery_app:celery_app", "worker", "--loglevel=INFO", "--concurrency=2"]

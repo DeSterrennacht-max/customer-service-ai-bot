@@ -36,7 +36,7 @@ Edit `infra/env/production.env` and replace every placeholder value before the f
 - `APP_OBJECT_STORAGE_BUCKET`
 - `APP_OBJECT_STORAGE_PUBLIC_BASE_URL`
 
-Keep `APP_AUTO_CREATE_SCHEMA=true` and `APP_BOOTSTRAP_DEMO_DATA=true` only for the first successful bootstrap. Switch them both to `false` after the first validated deployment.
+Keep `APP_AUTO_CREATE_SCHEMA=false` and `APP_BOOTSTRAP_DEMO_DATA=false` for production. Production startup validates these settings and refuses to start if either is enabled. Run migrations before starting the application. For an existing installation, follow the backup and migration sequence in [the maintenance guide](MAINTENANCE_20260922.md).
 
 For FAQ/knowledge-page image replies, create a Backblaze B2 bucket or other S3-compatible bucket and configure a public image domain. Set `APP_OBJECT_STORAGE_PUBLIC_BASE_URL` to that domain, for example `https://media.example.com`.
 
@@ -46,6 +46,8 @@ For FAQ/knowledge-page image replies, create a Backblaze B2 bucket or other S3-c
 cd /opt/customer-service-ai-bot/infra
 docker compose --env-file ./env/production.env up -d --build
 ```
+
+The command above assumes the database is already migrated. For a new installation, build the images, start only `db redis`, run `alembic upgrade head` from the API image, and bootstrap accounts once in an isolated operator process with `APP_ENV=bootstrap`. Do not enable bootstrap on the production API, Worker, Dispatcher, or Beat services.
 
 The internal services stay private. Only the project Nginx container binds to `127.0.0.1:18081`.
 
@@ -107,19 +109,9 @@ You can inspect the webhook state with:
 curl "https://api.telegram.org/bot<YOUR_BOT_TOKEN>/getWebhookInfo"
 ```
 
-## 7. Lock the bootstrap settings
+## 7. Keep production bootstrap disabled
 
-After the admin UI, webhook, and first message flow are verified:
-
-1. Edit `infra/env/production.env`
-2. Set `APP_AUTO_CREATE_SCHEMA=false`
-3. Set `APP_BOOTSTRAP_DEMO_DATA=false`
-4. Restart the stack
-
-```bash
-cd /opt/customer-service-ai-bot/infra
-docker compose --env-file ./env/production.env up -d
-```
+Keep both bootstrap flags disabled permanently. Use Alembic for schema updates and the operator recovery command in [the maintenance guide](MAINTENANCE_20260922.md) if a super-administrator password is lost.
 
 ## 8. Ongoing operations
 
