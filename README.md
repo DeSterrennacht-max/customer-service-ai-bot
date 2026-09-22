@@ -15,8 +15,9 @@
 
 ## 当前版本
 
-当前发布版本：`v1.3.3`
+当前发布版本：`v1.4.0`
 
+- `v1.4.0`: 升级六项运行环境，修复生产配置、人工接管、群去重、知识风险、登录会话和租户归属；新增持久化消息收发、自动恢复及手动补发。详见 [发布说明](infra/releases/v1.4.0.md)。
 - `v1.3.3`: 删除自动按坐席数计算报价逻辑；客户发送“10个坐席”等数量追问时，不再生成“按你说的 X 位坐席...”的乘法报价回复，原有 FAQ 价格问答仍可正常命中。
 - `v1.3.2`: FAQ 标准答案和知识页正文支持在已上传图片时留空；自动回复链路支持图片-only 回复，避免发送空文本。
 - `v1.3.1`: 修正邮箱自动回复触发条件；用户消息中包含邮箱地址即可按当前 Bot 配置自动回复，不再要求整条消息只有邮箱。
@@ -84,6 +85,8 @@ npm run dev
 
 ## Docker Compose 部署
 
+**所有更新必须先推送 GitHub 代码和版本标签，并发布正式 GitHub Release，确认成功后才能部署对应版本到 VPS。** 具体流程见 [发布流程](infra/RELEASE_PROCESS.md)；项目操作规则见 [AGENTS.md](AGENTS.md)。
+
 生产环境建议使用单机 `Docker Compose`，再由宿主机现有的 `Nginx` 统一处理域名和 HTTPS。这个仓库已经改成：
 
 - 只让项目内 `nginx` 监听 `127.0.0.1:18081`
@@ -104,19 +107,12 @@ docker compose --env-file ./env/production.env up -d --build
 - `https://<你的子域名>/health` -> API 健康检查
 - `https://<你的子域名>/telegram/webhook/<bot_username>` -> Telegram webhook
 
-首轮启动可保留：
+生产环境始终保持以下设置，首次安装和升级均先执行数据库迁移；账号初始化仅在独立操作进程中执行：
 
-- `APP_AUTO_CREATE_SCHEMA=true`
-- `APP_BOOTSTRAP_DEMO_DATA=true`
+- `APP_AUTO_CREATE_SCHEMA=false`
+- `APP_BOOTSTRAP_DEMO_DATA=false`
 
-完成首轮验证后，把这两个值切回 `false`，再执行：
-
-```bash
-cd infra
-docker compose --env-file ./env/production.env up -d
-```
-
-更完整的 VPS 落地步骤见 `infra/DEPLOY_VPS.md`。
+上面的启动命令仅适用于已经迁移的数据库。更完整的 VPS 落地步骤见 [部署文档](infra/DEPLOY_VPS.md)。
 
 保存启用状态的 Bot Profile 时，后端会自动向 Telegram 注册对应的 `setWebhook`。生产环境必须配置 `APP_PUBLIC_BASE_URL`，或至少配置 `NEXT_PUBLIC_API_BASE_URL` 作为兼容 fallback。
 

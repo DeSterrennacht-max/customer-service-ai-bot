@@ -38,6 +38,11 @@ upgrading their separate advisories is a subsequent dependency change.
 
 ## Deployment
 
+For all future deployments, first publish and verify the code, tag, and formal
+GitHub Release as required by [RELEASE_PROCESS.md](RELEASE_PROCESS.md). Only then
+deploy its exact commit to the VPS. The original 2026-09-22 maintenance deployment
+preceded this rule; v1.4.0 records that already-deployed maintenance release.
+
 1. Run unit and isolated PostgreSQL integration tests, then build the images. The
    integration suite only runs with `CSB_INTEGRATION_TESTS=1`, `APP_ENV=test`, and
    database name `csb_test`. Never point that suite at the production database.

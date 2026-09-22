@@ -2,6 +2,8 @@
 
 This project is intended to run on a single VPS with Docker Compose, while your host machine keeps owning public `80/443` through its existing Nginx setup.
 
+**Required order: publish the code and tag to GitHub, publish the corresponding non-draft, non-prerelease GitHub Release, verify its commit, and only then deploy that version to the VPS.** This also applies to hotfixes. If publication fails, stop before production deployment. Follow [RELEASE_PROCESS.md](RELEASE_PROCESS.md); never deploy uncommitted or unpublished code.
+
 ## 1. Prepare the server
 
 ```bash
@@ -115,11 +117,19 @@ Keep both bootstrap flags disabled permanently. Use Alembic for schema updates a
 
 ## 8. Ongoing operations
 
-Deploy updates:
+Deploy updates only after the GitHub Release has been published and verified. The example uses `v1.4.0`; replace it with the new published version. Confirm the checkout is clean and the tag commit matches the verified GitHub commit:
 
 ```bash
 cd /opt/customer-service-ai-bot
-git pull
+git status --short
+git fetch origin tag v1.4.0
+git switch --detach v1.4.0
+git rev-parse HEAD
+```
+
+Complete the release-specific backup and migration steps before starting the updated services (see [the maintenance guide](MAINTENANCE_20260922.md) for v1.4.0):
+
+```bash
 cd infra
 docker compose --env-file ./env/production.env up -d --build
 ```
@@ -130,7 +140,7 @@ If you are running a version before `v1.0.3`, restart the project Nginx after re
 docker compose --env-file ./env/production.env restart nginx
 ```
 
-Tail logs:
+Record the deployed tag, commit, Release URL, backup location, and validation results. Tail logs:
 
 ```bash
 cd /opt/customer-service-ai-bot/infra
